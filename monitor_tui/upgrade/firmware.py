@@ -113,6 +113,14 @@ def out_to_octets(out_path):
 APP_BASE_OCTET = 0x108000   # App 入口 0x084000 字地址 × 2 = octet 基址
 
 
+# Bootloader 固件（升级 BL 用）：基址 = BL 区首字 0x080000×2；末尾带镜像标记——
+# 独立链接的 App 基址也是 0x100000，没有标记就无法分辨，误烧会让模块失去
+# Bootloader，所以标记是硬性校验项
+BL_BASE_OCTET = 0x100000
+BL_MAGIC_OFF = 0x5FFC                       # 字地址 0x82FFE（SEC2 末两字）×2
+BL_MAGIC = bytes((0x42, 0x4C, 0xBD, 0xB3))  # 字 0x4C42/0xB3BD，低字节在前
+
+
 def load_firmware(path):
     """任意支持格式 → FirmwareImage；失败抛 FirmwareError。
 
@@ -131,4 +139,27 @@ def load_firmware(path):
             "固件基址 0x%X 不是 App 区入口（应为 0x108000，即字地址 0x084000）。"
             "请使用与 Bootloader 配套（App 在 0x084000 链接）的构建产物；"
             "独立运行的 App 镜像（0x080000 起）不能走 CAN 升级，会覆盖 Bootloader" % base)
+    return FirmwareImage(path, fmt, octets, base)
+
+
+def load_bl_firmware(path):
+    """Bootloader 固件 → FirmwareImage；失败抛 FirmwareError。
+
+    双重校验：基址必须是 BL 区首字（0x100000 octet），且 SEC2 末两字的镜像
+    标记必须匹配——标记把 BL 固件与同为 0x100000 基址的独立 App 镜像区分开。"""
+    if not os.path.exists(path):
+        raise FirmwareError("文件不存在: " + path)
+    fmt = detect_format(path)
+    if fmt == FMT_HEX:
+        octets, base = hex_to_octets(path)
+    else:
+        octets, base = out_to_octets(path)
+    if base != BL_BASE_OCTET:
+        raise FirmwareError(
+            "固件基址 0x%X 不是 Bootloader 区首址（应为 0x100000，即字地址 0x080000）"
+            % base)
+    if len(octets) < BL_MAGIC_OFF + 4 or octets[BL_MAGIC_OFF:BL_MAGIC_OFF + 4] != BL_MAGIC:
+        raise FirmwareError(
+            "不是有效的 Bootloader 固件（缺少镜像标记）。请用 Bootloader 工程"
+            "（bootloader 目录）的构建产物；独立 App 镜像烧进 BL 区会让模块变砖")
     return FirmwareImage(path, fmt, octets, base)

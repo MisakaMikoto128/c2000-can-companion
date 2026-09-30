@@ -11,6 +11,7 @@ const state = {
     catch (e) { return "0x01"; }
   })(),
   fwLoaded: false,
+  blFwLoaded: false,   // Bootloader 固件已选（不跨启动恢复，每次现选现烧）
   running: false,
   logCount: 0,
   blocksTotal: 0,
@@ -188,6 +189,12 @@ function refreshButtons() {
   $("batchBtn").title = autoOn ? "自动烧录仅针对单机，多机批量不支持自动触发"
     : !state.connected ? "需要先连接 CAN"
     : !state.fwLoaded ? "先选择固件文件" : "";
+  const blBtn = $("blStartBtn");
+  if (blBtn) {
+    blBtn.disabled = !(state.connected && state.blFwLoaded && !state.running);
+    blBtn.title = !state.connected ? "需要先连接 CAN"
+      : !state.blFwLoaded ? "先选择 Bootloader 固件" : "";
+  }
 }
 
 async function pickFile() {
@@ -231,6 +238,44 @@ async function startUpgrade() {
 }
 
 async function cancelUpgrade() { await pywebview.api.cancel(); }
+
+/* ---------- Bootloader 升级（RAM 烧录代理由后端自带，用户只选 BL 固件） ---------- */
+async function pickBlFile() {
+  const r = await pywebview.api.pick_bl_file();
+  if (!r.success) { if (r.message !== "已取消") showToast("error", r.message); return; }
+  state.blFwLoaded = true;
+  if (r.file) {
+    $("blFileChip").style.display = "";
+    $("blFwName").textContent = r.file.name;
+    const mtime = r.file.mtime ? ` · 修改于 ${r.file.mtime}` : "";
+    $("blFwMeta").textContent = `${r.file.format} · ${r.file.size.toLocaleString()} octet${mtime}`;
+    $("blFwCrc").textContent = "CRC32 " + r.file.crc32;
+  }
+  refreshButtons();
+}
+
+function blStart() {
+  if (!state.connected) { showToast("error", "请先连接 CAN"); return; }
+  if (!state.blFwLoaded) { showToast("error", "请先选择 Bootloader 固件"); return; }
+  if (state.running) { showToast("error", "升级进行中"); return; }
+  $("blModal").style.display = "flex";
+}
+
+async function blConfirm(ok) {
+  $("blModal").style.display = "none";
+  if (!ok) return;
+  const raw = ($("upgradeAddrInput").value || "").trim();
+  const v = parseInt(raw, 16);
+  const target = (!isNaN(v) && v >= 0x01 && v <= 0x3B)
+    ? "0x" + v.toString(16).toUpperCase().padStart(2, "0") : "";
+  const r = await pywebview.api.upgrade_bootloader(target || "",
+                                                   parseInt($("probeTimeout").value, 10));
+  if (!r.success) { showToast("error", r.message); return; }
+  state.running = true;
+  $("cancelBtn").style.display = "";
+  $("resultPanel").style.display = "none";
+  refreshButtons();
+}
 
 /* ---------- 批量升级（升级全部设备，逐台执行） ---------- */
 let batchConfirmStage = 0;   // 两遍确认：1=第一遍，2=第二遍，0=未在确认

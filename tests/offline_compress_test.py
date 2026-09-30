@@ -428,6 +428,310 @@ def test_pick_encoding():
               got == want, "得到 %s" % got)
 
 
+# ------------------------------------------------------------------ 11. BL 自升级
+class AgentFakeModule(LlzFakeModule):
+    """BL 1.4.0 假设备：支持 ALOAD/ARUN；ARUN 通过后翻成代理人格（烧 BL 区）。
+
+    BL 区单独建模：bl_flash 24K octet（SEC0~2，6 块），与 App 区的 self.flash
+    互不干扰。aload_support=False 模拟 ≤1.3.0 的旧 BL：byte6=0，且像真固件一样
+    对 0x28/0x29 静默（旧固件的命令号过滤直接丢掉这些帧）。"""
+
+    _BL_OCTETS = 6 * P.BLOCK_OCTETS      # SEC0~2 = 6 块 = 24576 octet
+
+    def __init__(self, *args, aload_support=True, **kwargs):
+        kwargs.setdefault("codec", "lz4d")        # 1.4.0 的压缩能力与 1.3.0 相同
+        kwargs.setdefault("bl_version", (1, 4, 0))
+        super().__init__(*args, **kwargs)
+        self.aload_support = aload_support
+        self.agent = False                  # ARUN 通过后 = True（代理人格）
+        self.ram = bytearray()              # ALOAD 装载内容
+        self.aload_blocks = 0
+        self.bl_flash = bytearray(b"\xFF" * self._BL_OCTETS)
+        self.bl_erased = False
+        self.bl_blocks = 0
+        self.bl_enc = {0: 0, 1: 0, 2: 0}    # 代理受理的 WRITE 编码统计
+        self.bl_skipped = 0
+        self.bl_verify_ok = False
+        self.arun_fail_once = False         # 测试注入：首次 ARUN 判 CRC 不符
+        self.reset_count = 0
+
+    def _reply_err(self, ch, cmd, now):
+        ch.push(now, P.build_id(cmd, P.HOST_ADDR, src=self.addr, err=1),
+                bytes((0xAA, 0xEE, 0xEE, 0, 0, 0, 0, (0xAA + 0xEE + 0xEE) & 0xFF)))
+
+    def on_send(self, ch, arb_id, data, now):
+        f = P.parse_id(arb_id)
+        if f["dev"] == P.DEV_MODULE and self.in_bootloader:
+            cmd = f["cmd"]
+            if cmd == P.CMD_INFO:
+                if self.agent:
+                    self._reply(ch, cmd, bytes((1, 0, 0, 16, 13, 0x00,
+                                                P.CAP_AGENT)), now)
+                else:
+                    maj, minor, patch = self.bl_version
+                    b5 = self._BYTE5[self.codec]
+                    b6 = P.CAP_ALOAD if self.aload_support else 0
+                    self._reply(ch, cmd, bytes((maj, minor, patch, 16, 13,
+                                                b5, b6)), now)
+                return
+            if self.agent:
+                if cmd == P.CMD_PROBE:
+                    buf = self._acc.setdefault(("PROBE", 0), bytearray())
+                    buf += data
+                    if len(buf) >= 4:
+                        del self._acc[("PROBE", 0)]
+                        self._reply(ch, cmd, bytes((P.CMD_PROBE, 0x02, self.addr,
+                                                    1, 0, 0)), now)
+                    return
+                if cmd == P.CMD_ERASE:
+                    self._on_agent_erase(bytes(data), ch, now)
+                    return
+                if cmd == P.CMD_WRITE:
+                    self._on_agent_write(f["err"], bytes(data), ch, now)
+                    return
+                if cmd == P.CMD_VERIFY:
+                    self._on_agent_verify(bytes(data), ch, now)
+                    return
+                if cmd == P.CMD_RESET:
+                    self._reply(ch, cmd, b"", now)
+                    self.agent = False       # 复位后由（新的）BL 接管
+                    self.reset_count += 1
+                    return
+                if cmd in (P.CMD_RUN, P.CMD_ALOAD, P.CMD_ARUN):
+                    self._reply_err(ch, cmd, now)
+                    return
+            else:
+                if self.aload_support and cmd == P.CMD_ALOAD:
+                    self._on_aload(bytes(data), ch, now)
+                    return
+                if self.aload_support and cmd == P.CMD_ARUN:
+                    self._on_arun(bytes(data), ch, now)
+                    return
+        super().on_send(ch, arb_id, data, now)
+
+    def _on_aload(self, data, ch, now):
+        buf = self._acc.setdefault(("ALOAD", 0), bytearray())
+        buf += data
+        need = 1 + P.BLOCK_OCTETS + 2
+        if len(buf) < need:
+            return
+        big = bytes(buf[:need])
+        del self._acc[("ALOAD", 0)]
+        if (big[0] != P.MARK_HEAD
+                or big[1 + P.BLOCK_OCTETS] not in (P.MARK_MORE, P.MARK_LAST)
+                or P.sum8(big[:-1]) != big[-1]):
+            self.big_errors.append("ALOAD 大帧 帧头/尾标/sum8 不对")
+            self._reply_err(ch, P.CMD_ALOAD, now)
+            return
+        if self.aload_blocks >= 4:
+            self._reply_err(ch, P.CMD_ALOAD, now)   # 超出装载区容量
+            return
+        self.ram += big[1:1 + P.BLOCK_OCTETS]
+        self.aload_blocks += 1
+        idx = self.aload_blocks - 1
+        self._reply(ch, P.CMD_ALOAD,
+                    bytes((0xA5, (idx >> 8) & 0xFF, idx & 0xFF)), now)
+
+    def _on_arun(self, data, ch, now):
+        crc = (data[0] << 24) | (data[1] << 16) | (data[2] << 8) | data[3]
+        fail = self.arun_fail_once
+        self.arun_fail_once = False
+        # 与真固件一致：ARUN 不论成败都复位装载序号，失败让主机从头重灌
+        if fail or not self.ram or P.crc32(bytes(self.ram)) != crc:
+            self.ram = bytearray()
+            self.aload_blocks = 0
+            self._reply_err(ch, P.CMD_ARUN, now)
+            return
+        self._reply(ch, P.CMD_ARUN, b"", now)
+        self.agent = True
+
+    def _on_agent_erase(self, data, ch, now):
+        buf = self._acc.setdefault(("AERASE", 0), bytearray())
+        buf += data
+        if len(buf) < 8:
+            return
+        del self._acc[("AERASE", 0)]
+        p = bytes(buf[:8])
+        if P.sum8(p[:7]) != p[7]:
+            self._reply_err(ch, P.CMD_ERASE, now)
+            return
+        self.bl_flash = bytearray(b"\xFF" * self._BL_OCTETS)   # 擦除 = 全 0xFF
+        self.bl_erased = True
+        self.bl_blocks = 0
+        self._reply(ch, P.CMD_ERASE, b"", now)
+
+    def _on_agent_write(self, err, data, ch, now):
+        buf = self._acc.setdefault(("AW", err), bytearray())
+        buf += data
+        if err == 0:
+            need = 1 + P.BLOCK_OCTETS + 2
+        else:
+            if len(buf) < 3:
+                return
+            need = (buf[1] | (buf[2] << 8)) + 5
+        if len(buf) < need:
+            return
+        big = bytes(buf[:need])
+        del self._acc[("AW", err)]
+        if (big[0] != P.MARK_HEAD or big[-2] not in (P.MARK_MORE, P.MARK_LAST)
+                or P.sum8(big[:-1]) != big[-1]):
+            self.big_errors.append("代理 WRITE 大帧 帧头/尾标/sum8 不对")
+            self._reply_err(ch, P.CMD_WRITE, now)
+            return
+        c = 0 if err == 0 else (big[1] | (big[2] << 8))
+        if err != 0 and c > 0:
+            self._reply_err(ch, P.CMD_WRITE, now)    # 代理不带解码器，压缩数据拒收
+            return
+        if self.bl_blocks >= 6:
+            self._reply_err(ch, P.CMD_WRITE, now)    # 块号越出 BL 区
+            return
+        self.bl_enc[err] += 1
+        if err != 0 and c == 0:
+            self.bl_skipped += 1                     # 空块跳过：擦除态即内容
+        else:
+            off = self.bl_blocks * P.BLOCK_OCTETS
+            self.bl_flash[off:off + P.BLOCK_OCTETS] = big[1:1 + P.BLOCK_OCTETS]
+        self.bl_blocks += 1
+        idx = self.bl_blocks - 1
+        self._reply(ch, P.CMD_WRITE,
+                    bytes((0xA5, (idx >> 8) & 0xFF, idx & 0xFF)), now)
+
+    def _on_agent_verify(self, data, ch, now):
+        buf = self._acc.setdefault(("AVERIFY", 0), bytearray())
+        buf += data
+        if len(buf) < 13:
+            return
+        del self._acc[("AVERIFY", 0)]
+        p = bytes(buf[:13])
+        if P.sum8(p[:12]) != p[12]:
+            self._reply_err(ch, P.CMD_VERIFY, now)
+            return
+        start = int.from_bytes(p[0:4], "big")
+        nwords = int.from_bytes(p[4:8], "big")
+        expect = int.from_bytes(p[8:12], "big")
+        if nwords == 0 or start + nwords > self._BL_OCTETS // 2:
+            self._reply_err(ch, P.CMD_VERIFY, now)
+            return
+        got = P.crc32(bytes(self.bl_flash[start * 2:(start + nwords) * 2]))
+        if got != expect:
+            self._reply_err(ch, P.CMD_VERIFY, now)
+            return
+        self.bl_verify_ok = True
+        self._reply(ch, P.CMD_VERIFY, b"", now)
+
+def make_bl_fw():
+    """6 块 BL 镜像命名空间：块 3 纯 0xFF（触发空块跳过），末尾带镜像标记。"""
+    blocks = [bytes((i + b * 13) & 0xFF for i in range(P.BLOCK_OCTETS))
+              for b in range(6)]
+    blocks[3] = b"\xFF" * P.BLOCK_OCTETS
+    img = bytearray(b"".join(blocks))
+    img[FW.BL_MAGIC_OFF:FW.BL_MAGIC_OFF + 4] = FW.BL_MAGIC  # 落在块 5 尾部
+    return types.SimpleNamespace(octets=bytes(img), size=len(img), fmt="out",
+                                 base_addr=FW.BL_BASE_OCTET,
+                                 crc32=P.crc32(bytes(img)))
+
+def test_bl_self_upgrade_closed_loop():
+    print("11) 闭环：BL 1.4.0 + RAM 代理 → BL 区整镜像烧写（含空块跳过）")
+    from monitor_tui.upgrade import ram_burner_blob as A
+    dev = AgentFakeModule(addr=0x01, in_bootloader=True)
+    api = make_api(dev)
+    fw = make_bl_fw()
+    api._flash_bootloader(0x01, fw)
+    check("ALOAD 装载了完整代理（4 块 / 16384 octet）",
+          dev.aload_blocks == 4 and len(dev.ram) == len(A.BURNER_BIN) == 16384,
+          "%d 块 %d octet" % (dev.aload_blocks, len(dev.ram)))
+    check("代理接管后又复位回 BL（RESET 恰好一次）", dev.reset_count == 1,
+          str(dev.reset_count))
+    check("BL 区与镜像逐字节一致", bytes(dev.bl_flash) == fw.octets,
+          "%d vs %d octet" % (len(dev.bl_flash), len(fw.octets)))
+    check("BL 区擦过且 VERIFY 通过", dev.bl_erased and dev.bl_verify_ok)
+    check("写入 = 直通 5 块 + 空块跳过 1 块（块 3 纯 0xFF）",
+          dev.bl_enc == {0: 5, 1: 0, 2: 1} and dev.bl_skipped == 1,
+          "%s skipped=%d" % (dev.bl_enc, dev.bl_skipped))
+    check("App 区没有被碰（无 App 侧写入）", len(dev.flash) == 0,
+          str(len(dev.flash)))
+    check("无契约违反记录", dev.big_errors == [], str(dev.big_errors))
+    check("ARUN 帧布局：前 4 字节大端 CRC32",
+          P.arun_payload(0x12345678)[:4] == bytes.fromhex("12345678")
+          and len(P.arun_payload(0x12345678)) == 8)
+
+
+def test_bl_upgrade_rejected_old_bl():
+    print("12) 兼容：旧 BL（byte6=0）→ 明确报错，且一帧 ALOAD 都没发")
+    dev = AgentFakeModule(addr=0x01, in_bootloader=True, aload_support=False)
+    api = make_api(dev)
+    try:
+        api._flash_bootloader(0x01, make_bl_fw())
+        check("旧 BL 应抛 BootloaderError", False, "没抛异常")
+    except BootloaderError as e:
+        check("报错提示「不支持在线升级自身」+ 指去烧录器",
+              "不支持在线升级自身" in str(e) and "烧录器" in str(e), str(e))
+    check("旧 BL 没收到任何 ALOAD/ARUN 帧",
+          len(api._ch.bl_cmd_frames(P.CMD_ALOAD)) == 0
+          and len(api._ch.bl_cmd_frames(P.CMD_ARUN)) == 0)
+    check("BL 区未被擦写", not dev.bl_erased and dev.bl_blocks == 0)
+
+
+def test_bl_upgrade_arun_retry():
+    print("13) ARUN 校验失败 → 报错；装载序号已复位，从头重灌即成功")
+    dev = AgentFakeModule(addr=0x01, in_bootloader=True)
+    dev.arun_fail_once = True
+    api = make_api(dev)
+    fw = make_bl_fw()
+    try:
+        api._flash_bootloader(0x01, fw)
+        check("首次 ARUN 失败应抛 BootloaderError", False, "没抛异常")
+    except BootloaderError as e:
+        check("首次失败报 err（ARUN 被判 CRC 不符）", "err=" in str(e), str(e))
+    check("失败后装载序号已复位（ram 清空）", len(dev.ram) == 0)
+    api._flash_bootloader(0x01, fw)   # 第二次：完整流程应走通
+    check("重试后 BL 区逐字节一致", bytes(dev.bl_flash) == fw.octets)
+    check("重试后 VERIFY 通过且复位一次", dev.bl_verify_ok and dev.reset_count == 1)
+
+
+def test_bl_firmware_file_guard():
+    print("14) BL 固件文件守卫：基址 + 镜像标记双重校验（Intel HEX 手写三件）")
+
+    def rec(addr, words):
+        data = b"".join(bytes((w >> 8, w & 0xFF)) for w in words)  # order=MS
+        head = bytes((len(data), (addr >> 8) & 0xFF, addr & 0xFF, 0))
+        return b":" + (head + data).hex().upper().encode() + \
+            b"%02X" % ((-sum(head + data)) & 0xFF)
+
+    def write_hex(path, words_at_0, with_magic):
+        lines = [b":020004040008F6"]            # 扩展段 0x0008 → 字基址 0x80000
+        lines.append(rec(0x0000, words_at_0))
+        if with_magic:
+            lines.append(rec(0x2FFE, [0x4C42, 0xB3BD]))   # SEC2 末两字
+        lines.append(b":00000001FF")
+        open(path, "wb").write(b"\r\n".join(lines) + b"\r\n")
+
+    import tempfile
+    tmp = tempfile.mkdtemp()
+    good = os.path.join(tmp, "bl_good.hex")
+    write_hex(good, [0x0040, 0xB980], True)
+    fw = FW.load_bl_firmware(good)
+    check("合法 BL hex：基址 0x100000、全长 0x6000、标记在位",
+          fw.base_addr == FW.BL_BASE_OCTET and fw.size == 0x6000
+          and fw.octets[FW.BL_MAGIC_OFF:FW.BL_MAGIC_OFF + 4] == FW.BL_MAGIC,
+          "base=0x%X size=0x%X" % (fw.base_addr, fw.size))
+    no_magic = os.path.join(tmp, "bl_nomagic.hex")
+    write_hex(no_magic, [0x0040, 0xB980], False)
+    try:
+        FW.load_bl_firmware(no_magic)
+        check("缺镜像标记应拒绝", False, "没抛异常")
+    except FW.FirmwareError as e:
+        check("缺镜像标记拒绝（提示直烧版变砖风险）", "镜像标记" in str(e), str(e))
+    app_side = os.path.join(tmp, "app.hex")
+    lines = [b":020004040008F6", rec(0x4000, [0x0040, 0xB980]), b":00000001FF"]
+    open(app_side, "wb").write(b"\r\n".join(lines) + b"\r\n")
+    try:
+        FW.load_bl_firmware(app_side)
+        check("App 基址应拒绝", False, "没抛异常")
+    except FW.FirmwareError as e:
+        check("App 基址拒绝（基址 0x108000）", "0x108000" in str(e), str(e))
+
+
 def main():
     print("=" * 64)
     print("LZ4 压缩传输离线测试（不加载 ControlCAN.dll、不打开任何设备）")
@@ -438,7 +742,8 @@ def main():
                test_closed_loop_compressed, test_closed_loop_chained,
                test_closed_loop_no_capability,
                test_closed_loop_mixed_fallback, test_closed_loop_skip_fill_blocks,
-               test_pick_encoding):
+               test_pick_encoding, test_bl_self_upgrade_closed_loop, test_bl_upgrade_rejected_old_bl,
+               test_bl_upgrade_arun_retry, test_bl_firmware_file_guard):
         fn()
     fails = [r for r in RESULTS if not r[1]]
     print("-" * 64)

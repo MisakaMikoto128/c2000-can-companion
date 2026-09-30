@@ -151,13 +151,15 @@ class FlashBootloader:
         return P.parse_ack(bytes(ack.data))
 
     def write(self, octets, progress=None, on_retry=None, encoding=P.ENC_DIRECT,
-              keep_blocks=None):
+              ff_skip=False, keep_blocks=None):
         """按块写入 octet 流（自动补齐），返回 (块数, 总 octet 数)。
 
         encoding 是线上传输编码（P.ENC_*，通常由 pick_encoding 按 INFO 能力
         选出）：direct=直通；lz4=算法 1 独立块压缩；lz4d=算法 2 链式字典，
         整块纯 0xFF 的填充块改发 C=0 空块跳过——擦除态即正确内容，不烧写
         只推进块号。
+        ff_skip=True（仅烧录代理收，升级 BL 用）：直通下也把纯 0xFF 块改发
+        C=0 空块帧（算法 2 标记）——代理不带解码器，只认这个跳过约定。
         压缩后 ≤ 4094 octet 才发压缩大帧，否则该块退直通——逐块独立决策，
         混传完全合法（链式字典只认明文内容，与编码形态无关）。
         进度口径不变：块数始终按明文块计。
@@ -205,6 +207,9 @@ class FlashBootloader:
                     enc_err = P.COMPRESS_LZ4   # 算法 1
                 else:            # 压缩不划算（膨胀或几乎无收益），该块退直通
                     big = P.write_frame(block, last=last)
+            elif ff_skip and block == full_ff:
+                big = P.write_frame_compressed(b"", last=last)
+                enc_err = P.COMPRESS_LZ4D
             else:
                 big = P.write_frame(block, last=last)
             blk_retry = None
@@ -215,6 +220,39 @@ class FlashBootloader:
             if progress is not None:
                 progress(k + 1, nb)
         return nb, len(octets)
+
+    # ---- Bootloader 自升级（RAM 烧录代理） -------------------------------
+    def aload(self, octets, progress=None, on_retry=None):
+        """把代理镜像逐块写进 RAM 装载区（线格式同 WRITE 直通，ACK 也同格式）。
+        octets 必须已按块长补 0xFF；块数不得超过 P.AGENT_MAX_OCTETS 对应的容量。"""
+        if len(octets) % 2:
+            octets += b"\xFF"
+        if len(octets) > P.AGENT_MAX_OCTETS:
+            raise BootloaderError("烧录代理镜像过大（%d octet > 装载区容量 %d）"
+                                  % (len(octets), P.AGENT_MAX_OCTETS))
+        nb = (len(octets) + P.BLOCK_OCTETS - 1) // P.BLOCK_OCTETS
+        for k in range(nb):
+            block = octets[k * P.BLOCK_OCTETS:(k + 1) * P.BLOCK_OCTETS]
+            last = k == nb - 1
+            blk_retry = None
+            if on_retry is not None:
+                blk_retry = lambda attempt, tries, kind: on_retry(k + 1, attempt, tries, kind)
+            self._transact_big(P.CMD_ALOAD, P.write_frame(block, last),
+                               ack_timeout_s=0.2, tries=3, on_retry=blk_retry)
+            if progress is not None:
+                progress(k + 1, nb)
+        return nb
+
+    def arun(self, octets):
+        """校验 RAM 里的代理镜像并启动。octets 必须与 ALOAD 发过的完全一致
+        （含块补齐）：CRC 覆盖长度 = 已收块数×4096，双方各自算、口径一致。
+        失败（CRC 不符）后模块侧装载序号已复位，可从头重新 ALOAD。"""
+        if len(octets) % 2:
+            octets += b"\xFF"
+        crc = P.crc32(octets)
+        if self._wait_ack(P.CMD_ARUN, 2.0, P.arun_payload(crc)) is None:
+            raise BootloaderError("ARUN 无应答")
+        return True
 
     def verify(self, octets):
         """全区校验：设备目标区前 len(octets)//2 字的实际内容 CRC 与新固件一致。"""

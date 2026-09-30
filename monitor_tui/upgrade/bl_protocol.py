@@ -18,6 +18,18 @@ CMD_READ = 0x24
 CMD_RUN = 0x25
 CMD_INFO = 0x26
 CMD_RESET = 0x27
+CMD_ALOAD = 0x2B          # 装载 RAM 烧录器（块大帧，格式同 WRITE 直通）
+CMD_ARUN = 0x2C           # 校验并启动烧录器（单帧：CRC32，长度=已收块数×4096 双方同口径）
+# 注意：dev 0x0C 里 0x28 是自有协议遥测、0x2A 是 walk 配置——ALOAD/ARUN 曾占
+# 0x28/0x29 与遥测撞号（遥测帧被 BL 误拼大帧回错误应答，且刷新判跳计时），
+# 已挪到 0x2B/0x2C；固件侧受理同步改为命令白名单（boot_protocol.c）
+
+ERR_OK = 0
+ERR_FAIL = 1
+
+BLOCK_OCTETS = 4096            # 每块 octet 数 = 2048 字
+TARGET_SECTOR_NB = 12          # 目标区（App 区 SEC4~15）逻辑扇段数，与固件 boot_jump.h 同源
+TARGET_BLOCK_NB = TARGET_SECTOR_NB * 2   # 目标区总块数 = 24（INFO byte3 是芯片总扇区数 16，不作此用）
 # 注意：dev 0x0C 里 0x28 是自有协议遥测、0x2A 是 walk 配置——ALOAD/ARUN 曾占
 # 0x28/0x29 与遥测撞号（遥测帧被 BL 误拼大帧回错误应答，且刷新判跳计时），
 # 已挪到 0x2B/0x2C；固件侧受理同步改为命令白名单（boot_protocol.c）
@@ -106,6 +118,14 @@ COMPRESS_CAP_LZ4D = 0x04        # INFO byte5 能力位：bit2 = 支持 LZ4 链�
 # 传输编码选择（写块时的线上编码）：与算法 ID 的映射——
 # direct → 算法 0 直通；llz/lz4 → 算法 1（同 ID 两代编码，按 INFO 版本段区分：
 # BL V1.1.0 解 LLZ、≥V1.2.0 解 LZ4）；lz4d → 算法 2 链式字典 + 空块跳过。
+CAP_ALOAD = 0x01                # bit0：支持 ALOAD/ARUN（可在线升级 Bootloader 自身）
+CAP_AGENT = 0x02                # bit1：本端就是 RAM 烧录代理（主机据此确认跳转成功）
+AGENT_MAX_OCTETS = 4 * BLOCK_OCTETS   # 代理装载区上限（4 块，0xA000~0xBFFF 字地址）
+
+# 传输编码选择（写块时的线上编码）：与算法 ID 的映射——
+# direct → 算法 0 直通；llz/lz4 → 算法 1（同 ID 两代编码，按 INFO 版本段区分：
+# BL V1.1.0 解 LLZ、≥V1.2.0 解 LZ4）；lz4d → 算法 2 链式字典 + 空块跳过。
+
 ENC_DIRECT = "direct"
 ENC_LZ4 = "lz4"
 ENC_LZ4D = "lz4d"
@@ -142,6 +162,13 @@ def read_payload(start_word, word_count):
     p = bytearray(u32_be(start_word) + u16_be(word_count))
     p.append(sum8(p))
     return bytes(p)
+
+
+def arun_payload(expected_crc32):
+    """ARUN 单帧载荷：前 4 字节是已收全部代理块（含 0xFF 补齐）的 CRC32。
+    长度不上线：装载块数×4096 就是双方共同的覆盖口径。与 RUN/INFO 一样
+    不附 sum8（单帧直收，不经过大帧拆装）。"""
+    return u32_be(expected_crc32) + bytes(4)
 
 
 def parse_ack(frame_data):

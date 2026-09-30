@@ -45,6 +45,7 @@ from monitor_tui.protocol import (CMD_BUILD_TIME, CMD_ENTER_BL, CMD_PROBE,
 from monitor_tui.upgrade import bl_protocol as P
 from monitor_tui.upgrade import selective
 from monitor_tui.upgrade import firmware as FW
+from monitor_tui.upgrade import ram_burner_blob as BURNER
 from monitor_tui.upgrade.bl_client import (BootloaderError, FlashBootloader,
                                            pick_encoding)
 from monitor_tui.upgrade.can_channel import CanChannel
@@ -361,6 +362,47 @@ class HostAPI:
         if r.get("success"):
             r["restored"] = True
         return r
+
+    def pick_bl_file(self):
+        """选择 Bootloader 固件（升级 BL 用）。基址 + 镜像标记双重校验在
+        load_bl_firmware 里，选错文件（App/直烧版）在那里就明确拒掉。"""
+        result = self._window.create_file_dialog(
+            webview.OPEN_DIALOG,
+            file_types=("Bootloader 固件 (*.out;*.elf;*.hex)", "所有文件 (*.*)"))
+        if not result:
+            return {"success": False, "message": "已取消"}
+        path = result[0]
+        try:
+            fw = FW.load_bl_firmware(path)
+        except FW.FirmwareError as e:
+            self._bl_fw = None
+            self._log("Bootloader 固件解析失败: %s" % e)
+            return {"success": False, "message": str(e)}
+        self._bl_fw = fw
+        self._log("Bootloader 固件就绪: %s（%d octet，CRC32 0x%08X，修改 %s）"
+                  % (os.path.basename(path), fw.size, fw.crc32,
+                     self._fw_mtime_str(path)))
+        return {"success": True, "file": {"name": os.path.basename(path),
+                                          "format": fw.fmt.upper(), "size": fw.size,
+                                          "crc32": "0x%08X" % fw.crc32,
+                                          "mtime": self._fw_mtime_str(path)}}
+
+    def load_bl_file(self, path):
+        """按路径载入 Bootloader 固件（pick_bl_file 的无对话框版本，脚本/测试用）。"""
+        try:
+            fw = FW.load_bl_firmware(path)
+        except FW.FirmwareError as e:
+            self._bl_fw = None
+            self._log("Bootloader 固件解析失败: %s" % e)
+            return {"success": False, "message": str(e)}
+        self._bl_fw = fw
+        self._log("Bootloader 固件就绪: %s（%d octet，CRC32 0x%08X，修改 %s）"
+                  % (os.path.basename(path), fw.size, fw.crc32,
+                     self._fw_mtime_str(path)))
+        return {"success": True, "file": {"name": os.path.basename(path),
+                                          "format": fw.fmt.upper(), "size": fw.size,
+                                          "crc32": "0x%08X" % fw.crc32,
+                                          "mtime": self._fw_mtime_str(path)}}
 
     # ---- 连接配置（设置页） ----------------------------------------------
     def set_link_config(self, baud, channel):
@@ -972,6 +1014,136 @@ class HostAPI:
                  % (way, elapsed, _ENCODING_CN[encoding], crc, nb, total))
         self._log("✓ 0x%02X %s完成，用时 %.1f 秒（%s），CRC32=0x%08X，已跳转 App"
                   % (addr, way, elapsed, _ENCODING_CN[encoding], crc))
+
+    # ---- Bootloader 自升级（RAM 烧录代理路径） ----------------------------
+
+    def upgrade_bootloader(self, addr=None, timeout_s=PROBE_TIMEOUT_DEFAULT_S):
+        """升级 Bootloader 自身：装载 RAM 烧录代理，由它擦写 BL 区（SEC0~2）。
+
+        复用单机升级的探测/确认/进 BL 链路；区别在拿到 BL 之后先喂代理。
+        中断风险：代理开始擦除后断电会让模块失去 Bootloader（需烧录器恢复），
+        前端弹窗已把这层风险明示给用户。"""
+        if self._bl_fw is None:
+            return {"success": False, "message": "请先选择 Bootloader 固件"}
+        if self._ch is None:
+            return {"success": False, "message": "请先连接 CAN"}
+        if self._progress["running"]:
+            return {"success": False, "message": "升级进行中"}
+        target = self._parse_addr(addr)
+        window = self._parse_window(timeout_s)
+        self._cancel.clear()
+        self._confirm_answer = None
+        self._confirm_evt.clear()
+        self._progress = self._new_progress()
+        self._set_progress(running=True, stage="probe", message="正在探测设备…")
+        self._thread = threading.Thread(target=self._upgrade_bl_worker,
+                                        args=(target, window),
+                                        name="bl-upgrade", daemon=True)
+        self._thread.start()
+        return {"success": True}
+
+    def _upgrade_bl_worker(self, target_addr, window_s):
+        self._watch.stop_poll("升级开始")
+        try:
+            addr = self._acquire_bootloader(target_addr, window_s)
+            self._flash_bootloader(addr, self._bl_fw)
+        except UpgradeCancelled as e:
+            self._set_progress(success=False, cancelled=True, message=str(e))
+            self._log("BL 升级流程结束: %s" % e)
+        except BootloaderError as e:
+            self._set_progress(success=False, message=str(e))
+            self._log("✕ BL 升级失败: %s" % e)
+        except Exception as e:  # noqa: BLE001 - 工作线程不炸宿主
+            self._set_progress(success=False, message="异常: %s" % e)
+            self._log("✕ BL 升级异常: %s" % e)
+        else:
+            self._set_progress(success=True)
+        finally:
+            done = dict(self._progress)
+            self._set_progress(running=False)
+            self._watch.notify_firmware_updated()   # WATCH 已校验态推一次重校验提醒
+
+    def _flash_bootloader(self, addr, fw):
+        """对已在 Bootloader 的模块执行 BL 自升级：ALOAD 装载代理 → ARUN 启动 →
+        代理用同一套 ERASE/WRITE/VERIFY 烧 BL 区 → RESET 进新 BL。
+
+        代理只认直通 + 空块跳过（它不带解码器），所以这里固定 encoding=direct、
+        ff_skip=True，不走 pick_encoding 协商。"""
+        bl = self._bl(addr)
+        progress = self._set_progress
+        t0 = time.monotonic()
+
+        info = bl.info()
+        if not (info["self_flags"] & P.CAP_ALOAD):
+            raise BootloaderError(
+                "当前模块的 Bootloader（%d.%d.%d）不支持在线升级自身。"
+                "需先用烧录器（XDS）烧写 1.4.0 或更新的 Bootloader" % info["version"])
+
+        progress(stage="erase", percent=2, message="准备烧写环境…")
+        self._log("装载烧录代理到 RAM（%d octet）…" % len(BURNER.BURNER_BIN))
+        bl.aload(BURNER.BURNER_BIN)
+        bl.arun(BURNER.BURNER_BIN)
+        time.sleep(0.4)   # 代理启动要重配 CAN：留小窗再确认它已接管
+        info2 = bl.info()
+        if not (info2["self_flags"] & P.CAP_AGENT):
+            raise BootloaderError("烧录代理没有接管（应答的仍是 Bootloader 本体）")
+        self._log("烧录代理已接管（代理 v%d.%d.%d）" % info2["version"])
+
+        progress(stage="erase", percent=8, message="擦除 Bootloader 区…")
+        self._log("擦除 Bootloader 区（SEC0~2）…")
+        bl.erase()
+
+        total_blocks = (fw.size + P.BLOCK_OCTETS - 1) // P.BLOCK_OCTETS
+
+        def on_block(done, total):
+            if self._cancel.is_set():
+                raise UpgradeCancelled("已取消")
+            pct = 10 + int(82.0 * done / total)
+            progress(stage="write", percent=pct,
+                     blocks_done=done, blocks_total=total,
+                     message="写入 %d/%d 块" % (done, total))
+
+        def on_retry(block_no, attempt, tries, kind):
+            progress(
+                stage="write", blocks_retry=block_no - 1,
+                message="写入 %d/%d 块·第 %d 块重发（%s，第 %d/%d 次）"
+                        % (block_no - 1, total_blocks, block_no,
+                           "收到错误应答" if kind == "错误应答" else "等 ACK 超时",
+                           attempt, tries))
+        self._log("写入 Bootloader 固件（%d octet，直通）…" % fw.size)
+        nb, total = bl.write(fw.octets, progress=on_block, on_retry=on_retry,
+                             encoding=P.ENC_DIRECT, ff_skip=True)
+
+        progress(stage="verify", percent=95, message="校验 CRC32…")
+        self._log("校验 CRC32…")
+        _, crc = bl.verify(fw.octets)
+
+        progress(stage="run", percent=100, message="复位模块…")
+        if not bl.reset():
+            raise BootloaderError("RESET 无应答：固件已写入但模块没有复位，可重新上电")
+        elapsed = time.monotonic() - t0
+        self._log("✓ 0x%02X Bootloader 升级完成，用时 %.1f 秒，CRC32=0x%08X"
+                  % (addr, elapsed, crc))
+        # 复位后新 BL 就位确认（趁它等主机的窗口查一帧）。只是留痕确认，失败不算
+        # 升级失败——VERIFY 已经证明内容是对的
+        time.sleep(0.6)
+        try:
+            info3 = bl.info()
+            self._log("新 Bootloader 已就位：%d.%d.%d" % info3["version"])
+        except BootloaderError:
+            info3 = None
+        # 必须 RUN 直送进 App，不能靠"1.5 秒无消息自动判跳"：上位机在线时的周期
+        # 流量会不断刷新 BL 的空闲计时，模块会被钉在 Bootloader 里出不来（真机
+        # 实测复现）。RUN 不看空闲、收到就跳
+        if bl.run():
+            progress(message="Bootloader 升级完成，用时 %.1f 秒（CRC32=0x%08X，%d 块），"
+                             "已返回 App" % (elapsed, crc, nb))
+        else:
+            # RUN 应答偶发丢失（应答先发、模块随后跳走），以 App 状态帧为准；
+            # 不判失败——BL 内容已由 VERIFY 证明，模块最迟在下次上电正常进 App
+            self._log("RUN 无应答：固件已写入且校验通过，若模块未回 App 请点「运行 App」")
+            progress(message="Bootloader 升级完成，用时 %.1f 秒（CRC32=0x%08X，%d 块）；"
+                             "若模块未回 App 请点「运行 App」" % (elapsed, crc, nb))
 
     # ---- 批量升级（升级全部设备，逐台执行） ------------------------------
     _STAGE_CN = {"erase": "擦除", "write": "写入", "verify": "校验", "run": "运行"}

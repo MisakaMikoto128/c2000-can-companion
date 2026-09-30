@@ -10,6 +10,7 @@ TI C2000 CAN 固件的桌面上位机：固件升级页 + 变量观察（WATCH�
 |---|---|
 | 固件升级 | 探测设备在哪一侧（App/Bootloader）→ 确认 → 擦写校验跳转，LZ4/LZ4 链式压缩传输 |
 | 增量升级 | 按块比对设备 Flash 现存内容，只写差异块，失败自动转全量 |
+| Bootloader 升级 | 内置 RAM 烧录代理镜像，经 ALOAD/ARUN 装载后由代理擦写 BL 区（配套 c2000-can-bootloader 的 ram_burner 工程） |
 | 批量升级 | 广播发现总线上全部设备，按地址逐台升级 |
 | 自动烧录 | 监视固件文件变化，编译产物一落盘即自动重载并升级（单机） |
 | 变量观察 | 解析 CCS 输出的 ELF .out 符号（DWARF），结构体/数组/枚举展开，相邻地址合并读取 |
@@ -30,6 +31,10 @@ TI C2000 CAN 固件的桌面上位机：固件升级页 + 变量观察（WATCH�
 **变量观察**——实时数值、极值统计、波形记录（图中波形记录了幅值写入前后的阶跃）：
 
 ![变量观察](img/watch_page.png)
+
+**Bootloader 升级**——代理装载、接管确认、新 BL 就位全程留痕：
+
+![Bootloader 升级](img/bl_upgrade_page.png)
 
 **关于**：
 
@@ -56,6 +61,7 @@ C2000-CAN-Companion/
 │   ├── protocol.py       自有协议（dev 0x0C）编解码
 │   ├── lz4.py            LZ4 独立块 + 链式字典压缩
 │   ├── upgrade/          Bootloader 客户端、固件装载、探测、增量规划、订阅分发通道
+│   │                     （ram_burner_blob.py = 内置 RAM 烧录代理镜像，随 BL 仓库 ram_burner 工程重建后同步再生成）
 │   └── static_host/      前端（index.html / app.js / watch.js，Tabulator + Chart.js 本地内置）
 ├── tests/                五套离线测试（不依赖硬件，288 项断言）
 └── demo/                 配套演示固件副本（供无硬件冒烟）
