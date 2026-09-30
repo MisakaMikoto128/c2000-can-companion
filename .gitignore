@@ -1,0 +1,7 @@
+.venv/
+__pycache__/
+*.pyc
+logfile/
+build/
+release/
+static_host/_index_live.html

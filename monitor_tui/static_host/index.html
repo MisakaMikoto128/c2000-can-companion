@@ -1,0 +1,325 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>CAN Companion</title>
+<!-- 前端资源版本号：任何静态文件（css/js）改动后递增，
+     用于绕过 WebView2 持久缓存，避免“新 HTML 配旧 JS”的混合缓存态 -->
+<link rel="stylesheet" href="style.css?v=1000002">
+<link rel="stylesheet" href="tabulator.min.css?v=1000002"><!-- WATCH 表格组件（MIT，本地内置） -->
+<link rel="stylesheet" href="watch.css?v=1000002"><!-- WATCH 表格主题映射 -->
+<!-- 主题插件样式：全部预加载，按 <html> 上的 .theme-<id> 类生效，切换零延迟 -->
+<link rel="stylesheet" href="themes/dark.css?v=1000002">
+<link rel="stylesheet" href="themes/light.css?v=1000002">
+<script>
+/* 首帧防闪烁：CSS/业务脚本加载前，先按记忆在 <html> 上挂好主题类。
+ * 类在此处与 ThemeRegistry 保持同一命名（.theme-<id>）。 */
+(function () {
+  var t = "dark";
+  try { t = localStorage.getItem("ccTheme") || "dark"; } catch (e) { /* 忽略 */ }
+  document.documentElement.classList.add("theme-" + t);
+})();
+</script>
+</head>
+<body>
+
+<div class="app">
+
+  <!-- 左侧图标栏 -->
+  <nav class="rail">
+    <button class="rail-btn active" data-view="upgrade" onclick="switchView('upgrade')" title="固件升级">
+      <svg viewBox="0 0 24 24"><path d="M12 19V6m0 0-5 5m5-5 5 5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/><path d="M5 21h14" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
+      <span>升级</span>
+    </button>
+    <button class="rail-btn" data-view="watch" onclick="switchView('watch')" title="变量观察">
+      <svg viewBox="0 0 24 24"><path d="M2 12s3.5-6.5 10-6.5S22 12 22 12s-3.5 6.5-10 6.5S2 12 2 12z" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/><circle cx="12" cy="12" r="2.6" fill="none" stroke="currentColor" stroke-width="1.6"/></svg>
+      <span>观察</span>
+    </button>
+    <button class="rail-btn" data-view="settings" onclick="switchView('settings')" title="设置">
+      <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09a1.65 1.65 0 0 0 1.51-1 1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      <span>设置</span>
+    </button>
+    <button class="rail-btn" data-view="about" onclick="switchView('about')" title="关于">
+      <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M12 11v5m0-8v.5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
+      <span>关于</span>
+    </button>
+  </nav>
+
+  <div class="main">
+
+    <!-- 顶部常驻状态条 -->
+    <header class="statusbar">
+      <span class="sb-item"><span class="dot" id="sbConnDot"></span><span id="sbConnText">未连接</span></span>
+      <span class="sb-sep"></span>
+      <span class="sb-item sb-mono" id="sbPort">USBCAN2 ch0 · 125k</span>
+      <span class="sb-sep"></span>
+      <span class="sb-item"><label>设备</label><span class="sb-mono" id="sbDev">—</span></span>
+      <span class="sb-sep"></span>
+      <span class="sb-item"><label>App 版本</label><span class="sb-mono" id="sbVer">—</span></span>
+      <span class="sb-sep"></span>
+      <span class="sb-item"><label>编译</label><span class="sb-mono" id="sbBuild">—</span></span>
+      <span class="sb-right sb-mono" id="sbStats">RX 0 · TX 0</span>
+    </header>
+
+    <!-- ============ 视图 1：固件升级 ============ -->
+    <section id="view-upgrade" class="view active">
+
+      <div class="stepbar" id="stepbar">
+        <div class="sstep" data-s="file"><b>①</b><span>选择固件</span></div>
+        <div class="sstep" data-s="conn"><b>②</b><span>连接设备</span></div>
+        <div class="sstep" data-s="write"><b>③</b><span>擦写</span></div>
+        <div class="sstep" data-s="verify"><b>④</b><span>校验</span></div>
+        <div class="sstep" data-s="run"><b>⑤</b><span>运行</span></div>
+      </div>
+
+      <div class="addr-line">
+        <span class="addr-label">目标地址</span>
+        <input type="text" id="upgradeAddrInput" class="mono" maxlength="2" list="scanAddrOptions">
+      </div>
+
+      <div class="dropzone" id="dropZone" onclick="pickFile()">
+        <div class="dz-text">点击选择固件文件</div>
+        <div class="dz-sub">.out / .elf / .hex（CCS 输出，自动识别；.out/.elf 需 hex2000）</div>
+      </div>
+      <div class="file-chip" id="fileChip" style="display:none;">
+        <span class="fc-name" id="fwName"></span>
+        <span class="mono fc-meta" id="fwMeta"></span>
+        <span class="mono fc-crc" id="fwCrc"></span>
+      </div>
+
+      <div class="panel">
+        <div class="panel-head">
+          <span class="panel-title">设备状态</span>
+          <label class="param-inline">探测超时
+            <select id="probeTimeout" class="sel">
+              <option value="10">10s</option>
+              <option value="20" selected>20s</option>
+              <option value="60">1min</option>
+            </select>
+          </label>
+          <label class="param-inline"><input type="checkbox" id="compressSw" checked> 压缩传输</label>
+          <label class="param-inline" title="固件文件更新后自动写入设备，仅支持单台；开启期间请勿用 CCS 下载程序"><input type="checkbox" id="autoFlashSw" onchange="autoFlashChanged()"> 自动烧录</label>
+        </div>
+        <div class="hint" id="afHint" style="display:none; padding:2px 14px 10px;">已开启自动烧录：固件文件更新后自动写入目标地址（仅单台）。开启期间请勿用 CCS 下载程序，两边同时写入会互相覆盖。</div>
+        <div class="dev-state" id="devState">尚未探测</div>
+        <div class="hint" id="devStateHint"></div>
+        <div class="dev-state" id="upgradeMode" style="display:none;"></div>
+        <div class="mod-line">
+          <div class="mod-list" id="modList"></div>
+          <span class="hint" id="modEmpty">探测到的设备会显示在这里</span>
+        </div>
+        <div class="mono bl-info" id="blInfo" style="display:none;"></div>
+      </div>
+
+      <div class="panel">
+        <div class="panel-head">
+          <span class="panel-title">烧写进度</span>
+          <span class="mono" id="pPct"></span>
+        </div>
+        <div class="blocks" id="blocks"></div>
+        <div class="stage-msg" id="stageMsg">选择固件并连接设备后开始</div>
+        <div class="btn-row">
+          <button class="btn btn-accent" id="startBtn" onclick="startUpgrade()" disabled>开始升级</button>
+          <button class="btn btn-ghost" id="cancelBtn" onclick="cancelUpgrade()" style="display:none;">取消</button>
+          <button class="btn btn-ghost" id="batchBtn" onclick="batchStart()" disabled>升级全部设备</button>
+        </div>
+        <div class="result" id="resultPanel" style="display:none;">
+          <span class="mono" id="resultText"></span>
+        </div>
+      </div>
+
+      <div class="panel" id="batchPanel" style="display:none;">
+        <div class="panel-head">
+          <span class="panel-title">批量升级（逐台执行）</span>
+          <span class="mono" id="batchSummary"></span>
+        </div>
+        <div class="frametable-wrap">
+          <table class="frametable mono">
+            <thead><tr><th>地址</th><th>状态</th><th>进度</th></tr></thead>
+            <tbody id="batchBody"></tbody>
+          </table>
+        </div>
+      </div>
+
+      <div class="panel">
+        <div class="panel-head">
+          <span class="panel-title">运行日志</span>
+          <button class="btn btn-ghost btn-s" onclick="clearLog()">清除</button>
+        </div>
+        <div class="term" id="logTerm"></div>
+      </div>
+
+    </section>
+
+    <!-- ============ 视图 2：变量观察（WATCH） ============ -->
+    <section id="view-watch" class="view">
+
+      <div class="panel" style="margin-top:0;">
+        <div class="panel-head">
+          <span class="panel-title">符号文件与连接</span>
+          <span class="mono" id="watchConn"></span>
+        </div>
+        <div class="dropzone" id="watchDrop" onclick="watchPickFile()" style="margin:14px;">
+          <div class="dz-text">点击选择符号文件</div>
+          <div class="dz-sub">.out / .elf（与板上固件同一次编译的产物）</div>
+        </div>
+        <div class="file-chip" id="watchFileChip" style="display:none; margin:14px 14px 0;">
+          <span class="fc-name" id="watchFwName"></span>
+          <span class="mono fc-meta" id="watchFwMeta"></span>
+        </div>
+        <div class="frame-filter">
+          <span class="ff-label">目标地址</span>
+          <input type="text" id="watchAddr" class="mono" value="01" maxlength="2" list="scanAddrOptions">
+          <span class="hint" id="watchStateLine">先选择符号文件</span>
+        </div>
+        <div class="hint" style="padding:10px 14px;">选择文件后自动校验（0x35 单帧 CRC，旧固件自动回退逐段读回）；符号文件已载入内存，之后修改本地文件不影响本次观察；不一致时本页拒绝观察与写入。</div>
+      </div>
+
+      <div class="panel">
+        <div class="panel-head">
+          <span class="panel-title">观察列表</span>
+          <span class="mono" id="watchStats"></span>
+          <span class="btn-row-inline">
+            <button class="btn btn-ghost btn-s" id="watchWaveBtn" onclick="watchWavePanelToggle()" disabled>波形</button>
+            <button class="btn btn-ghost btn-s" id="watchClearBtn" onclick="watchClearAll()">清空</button>
+          </span>
+        </div>
+        <div class="frame-filter">
+          <span class="ff-label">添加变量</span>
+          <input type="text" id="watchAddInput" class="mono" list="watchSymbols" placeholder="输入变量名" style="width:220px;">
+          <button class="btn btn-ghost btn-s" id="watchAddBtn" onclick="watchAdd()">添加</button>
+          <span class="ff-label">表达式</span>
+          <input type="text" id="watchExprInput" class="mono" placeholder="g_demo_wave * 2 + 1" style="width:180px;">
+          <button class="btn btn-ghost btn-s" id="watchExprBtn" onclick="watchAddExpr()">添加</button>
+          <span class="ff-label">轮询 ms</span>
+          <input type="number" id="watchPollMs" class="mono" value="100" min="0" step="50" style="width:80px;"
+                 onchange="watchOptionsChanged()" title="期望轮询周期，最小 50；0 = 停止">
+          <span class="hint" id="watchEffMs" style="display:none;"></span>
+          <label class="dbg-switch"><input type="checkbox" id="watchMerge" checked onchange="watchOptionsChanged()"> 合并相邻地址</label>
+          <label class="dbg-switch" title="每轮读取前关中断取同一时刻快照（协议 B7=0）；默认直读更快，读数可能撕裂"><input type="checkbox" id="watchSnap" onchange="watchOptionsChanged()"> 原子快照</label>
+          <span class="ff-label">空隙 字</span>
+          <input type="number" id="watchGap" class="mono" value="16" min="0" step="4" style="width:70px;"
+                 onchange="watchOptionsChanged()" title="地址空隙超过该字数就不合并进同一读请求">
+          <button class="btn btn-accent btn-s" id="watchPollBtn" onclick="watchPollToggle()" disabled>开始观察</button>
+          <span class="hint">直读模式，读数可能瞬间撕裂</span>
+        </div>
+        <div id="watchWave" class="watch-wave" style="display:none;">
+          <div class="watch-wave-head">
+            <span class="ff-label">波形</span>
+            <span class="hint" id="watchWaveInfo"></span>
+            <span style="flex:1;"></span>
+            <button class="btn btn-ghost btn-s" onclick="watchWaveExport()">导出 CSV</button>
+            <button class="btn btn-ghost btn-s" onclick="watchWaveClear()">清除</button>
+            <button class="btn btn-ghost btn-s" onclick="watchWavePanel(false)">收起</button>
+          </div>
+          <div class="watch-wave-body"><canvas id="watchWaveCanvas"></canvas></div>
+        </div>
+        <div id="watchTable" class="watch-table"></div>
+      </div>
+
+      <datalist id="watchSymbols"></datalist>
+
+    </section>
+
+    <!-- ============ 视图 3：设置 ============ -->
+    <section id="view-settings" class="view">
+
+      <div class="panel" style="margin-top:0;">
+        <div class="panel-head">
+          <span class="panel-title">CAN 连接</span>
+          <span class="hint">修改后立即断开并按新配置重连</span>
+        </div>
+        <div class="frame-filter">
+          <span class="ff-label">波特率</span>
+          <select id="baudSel" class="sel" onchange="linkConfigChanged()">
+            <option value="125000" selected>125 kbps</option>
+            <option value="250000">250 kbps</option>
+            <option value="500000">500 kbps</option>
+            <option value="1000000">1 Mbps</option>
+          </select>
+          <span class="ff-label">通道</span>
+          <select id="channelSel" class="sel" onchange="linkConfigChanged()">
+            <option value="0" selected>通道 0</option>
+            <option value="1">通道 1</option>
+          </select>
+        </div>
+        <div class="hint" style="padding:10px 14px;">波特率与通道随本页记忆，关软件重开仍保留。演示固件固定 125 kbps——将来固件改波特率后，在这里切换即可对上，无需改代码。</div>
+      </div>
+
+      <div class="panel" style="margin-top:14px;">
+        <div class="panel-head">
+          <span class="panel-title">外观</span>
+        </div>
+        <div class="frame-filter">
+          <span class="ff-label">主题</span>
+          <!-- 内置两套主题静态兜底：即使主题注册表脚本未加载，下拉框仍可切换；
+               额外安装的插件主题由 ThemeRegistry.init() 追加到末尾 -->
+          <select id="themeSel" class="sel" onchange="themeChanged()">
+            <option value="dark">暗黑</option>
+            <option value="light">明亮</option>
+          </select>
+        </div>
+        <div class="hint" style="padding:10px 14px;">主题随本页记忆，重启后保持。</div>
+      </div>
+    </section>
+
+    <!-- ============ 视图 4：关于 ============ -->
+    <section id="view-about" class="view">
+
+      <div class="panel" style="margin-top:0;">
+        <div class="panel-head"><span class="panel-title">关于本软件</span></div>
+        <table class="frametable mono about-table">
+          <tbody>
+            <tr><td>软件名称</td><td>CAN Companion</td></tr>
+            <tr><td>软件版本</td><td id="aboutVersion">—</td></tr>
+            <tr><td>作者</td><td>Liu Yuanlin</td></tr>
+            <tr><td>开源许可</td><td>CC BY-NC-SA 4.0（署名-非商业性使用-相同方式共享）</td></tr>
+            <tr><td>固件编译时刻</td><td id="aboutBuild">—</td></tr>
+            <tr><td>固件版本（App）</td><td id="aboutFwVer">—</td></tr>
+            <tr><td>配套固件</td><td>C2000-CAN-Bootloader / C2000-CAN-Watch（同作者仓库）</td></tr>
+          </tbody>
+        </table>
+        <div class="hint" style="padding:10px 14px;">固件编译时刻由 cmd 0x07 读取（Unix 时间戳，秒），连接 CAN 后自动查询。</div>
+      </div>
+    </section>
+
+  </div>
+</div>
+
+<div class="modal" id="confirmModal" style="display:none;">
+  <div class="modal-box">
+    <div class="modal-title">设备正在运行应用固件</div>
+    <div class="modal-text" id="confirmText"></div>
+    <div class="modal-btns">
+      <button class="btn btn-ghost" id="confirmNo" onclick="answerConfirm(false)">取消</button>
+      <button class="btn btn-accent" id="confirmYes" onclick="answerConfirm(true)">继续升级</button>
+    </div>
+  </div>
+</div>
+
+<datalist id="scanAddrOptions"></datalist>
+
+<div class="modal" id="batchModal" style="display:none;">
+  <div class="modal-box">
+    <div class="modal-title" id="batchModalTitle">升级全部设备</div>
+    <div class="modal-text" id="batchModalText"></div>
+    <div class="modal-btns">
+      <button class="btn btn-ghost" onclick="batchConfirm(false)">取消</button>
+      <button class="btn btn-accent" id="batchModalYes" onclick="batchConfirm(true)">继续</button>
+    </div>
+  </div>
+</div>
+
+<div class="toast-container" id="toastContainer"></div>
+
+<!-- 主题注册表先行，随后各主题插件自行注册，最后加载业务脚本 -->
+<script src="themes/registry.js?v=1000002"></script>
+<script src="themes/dark.js?v=1000002"></script>
+<script src="themes/light.js?v=1000002"></script>
+<script src="chart.min.js?v=1000002"></script><!-- WATCH 波形画布 Chart.js（MIT，本地内置） -->
+<script src="tabulator.min.js?v=1000002"></script><!-- WATCH 表格组件 Tabulator 6.6.0（MIT，本地内置） -->
+<script src="expr-eval.min.js?v=1000002"></script><!-- WATCH 表达式行求值 expr-eval 2.0.2（MIT，本地内置） -->
+<script src="watch.js?v=1000002"></script><!-- WATCH 页逻辑：先于 app.js，switchView 引用其函数 -->
+<script src="app.js?v=1000002"></script>
+</body>
+</html>

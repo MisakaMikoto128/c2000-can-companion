@@ -1,0 +1,22 @@
+/* 明亮主题插件样式（.theme-light）
+ * 暖纸白底 + 墨绿强调，保持仪器面板的读数对比度。 */
+.theme-light {
+  --bg: #F3F4F0;         /* 暖纸灰，不刺眼的非纯白 */
+  --panel: #FBFBF8;      /* 纸白面板 */
+  --panel-2: #ECEEE8;    /* 输入框/表头底 */
+  --line: #D7DBD1;
+  --text: #24312A;
+  --muted: #6B7870;
+  --accent: #0B7A52;     /* 深翠绿：白底上仍达 WCAG AA */
+  --amber: #A36700;      /* 加深琥珀，浅底可读 */
+  --red: #C23B45;
+  --cyan: #0E7490;
+  --accent-soft: rgba(11, 122, 82, .10);
+  --red-soft: rgba(194, 59, 69, .10);
+  --term-bg: #F7F8F4;
+  --row-cur: #E2EFE7;
+  --modal-mask: rgba(28, 34, 30, .40);
+  --mono: "Cascadia Mono", Consolas, monospace;
+  --sans: "Microsoft YaHei UI", system-ui, sans-serif;
+  --radius: 3px;
+}

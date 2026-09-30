@@ -1,0 +1,161 @@
+/* WATCH 表格主题映射（Tabulator 6.6.0 发行 CSS 没有 CSS 自定义属性，
+ * 这里把 .tabulator-* 映射到现有主题变量，暗黑/暖纸白等全部主题自动跟随）。
+ * 与 watch.js 配对；Tabulator 升级版本时需回归本覆写层。 */
+
+.watch-table {
+  height: 430px;
+  font-size: 12.5px;
+}
+
+.tabulator {
+  background: var(--panel);
+  border: none;
+  border-top: 1px solid var(--line);
+  color: var(--text);
+  font-family: var(--mono);
+  font-variant-numeric: tabular-nums;
+  font-size: 12.5px;
+  overflow: hidden;
+}
+.tabulator .tabulator-header {
+  background: var(--panel-2);
+  border-bottom: 1px solid var(--line);
+}
+.tabulator .tabulator-col {
+  background: var(--panel-2);
+  border-right: 1px solid var(--line);
+}
+.tabulator .tabulator-col-content { padding: 6px 10px; }
+.tabulator .tabulator-col-title {
+  color: var(--muted);
+  font-family: var(--sans);
+  font-size: 12px;
+  font-weight: 400;
+}
+.tabulator .tabulator-col.tabulator-sortable .tabulator-col-title { color: var(--muted); }
+
+.tabulator .tabulator-row {
+  background: var(--panel);
+  border-bottom: 1px solid var(--line);
+  color: var(--text);
+  min-height: 26px;
+}
+.tabulator .tabulator-row.tabulator-row-even,
+.tabulator .tabulator-row.tabulator-row-odd { background: var(--panel); }
+.tabulator .tabulator-row:hover { background: var(--row-cur); }
+.tabulator .tabulator-row.tabulator-selected {
+  background: var(--row-cur) !important;
+  color: var(--text);
+}
+.tabulator .tabulator-cell {
+  padding: 4px 10px;
+  border-right: 1px solid var(--line);
+}
+.tabulator .tabulator-cell input,
+.tabulator .tabulator-cell select {
+  background: var(--panel-2);
+  border: 1px solid var(--accent);
+  color: var(--text);
+  font-family: var(--mono);
+  font-size: 12.5px;
+  outline: none;
+}
+.tabulator .tabulator-cell.tabulator-editing { border: 1px solid var(--accent); padding: 2px 8px; }
+
+/* 变化行标色：值与上一轮不同时整行语义红，恢复后自动回常规底色 */
+.tabulator .tabulator-row.watch-chg,
+.tabulator .tabulator-row.watch-chg:hover { background: var(--red-soft); }
+.tabulator .tabulator-row.watch-chg .tabulator-cell { color: var(--red); }
+.tabulator .tabulator-row.watch-chg .tabulator-cell:last-child { color: var(--red); }
+
+/* 符号缺失行：换符号文件后同名符号不存在的条目，警告色提示、轮询已跳过 */
+.tabulator .tabulator-row.watch-missing,
+.tabulator .tabulator-row.watch-missing:hover { background: rgba(255, 176, 46, .16); }
+.tabulator .tabulator-row.watch-missing .tabulator-cell { color: var(--amber); }
+
+/* 树形展开控件（结构体成员）与层级连线 */
+.tabulator .tabulator-data-tree-control {
+  background: transparent;
+  border: 1px solid var(--muted);
+}
+.tabulator .tabulator-data-tree-control .tabulator-data-tree-control-expand { background: var(--muted); }
+.tabulator .tabulator-data-tree-control .tabulator-data-tree-control-collapse { background: var(--muted); }
+.tabulator .tabulator-data-tree-control:hover { border-color: var(--accent); }
+.tabulator .tabulator-data-tree-branch { border-color: var(--line); }
+
+/* 空表占位 */
+.tabulator .tabulator-placeholder { background: var(--panel); }
+.tabulator .tabulator-placeholder .tabulator-placeholder-contents {
+  color: var(--muted);
+  font-family: var(--sans);
+  font-size: 13px;
+  font-weight: 400;
+}
+
+/* 底部行数条不用（信息在面板头） */
+.tabulator .tabulator-footer { display: none; }
+
+/* 表内只读行（Flash 符号 / 容器行）的值列弱化 */
+.tabulator .tabulator-cell.watch-readonly { color: var(--muted); }
+
+/* ---- UI 审核修正（2026-09-30） ---- */
+
+/* Tabulator 发行 CSS 给表体层默认白底（.tabulator-tableholder .tabulator-table
+ * { background-color:#fff }），半透明行样式叠在上面会偏离主题——映射到面板色 */
+.tabulator .tabulator-tableholder .tabulator-table {
+  background: var(--panel);
+}
+
+/* WATCH 页输入框与全站输入框同一视觉语言（此前是浏览器默认白底） */
+#view-watch input[type="text"],
+#view-watch input[type="number"] {
+  background: var(--panel-2);
+  color: var(--text);
+  border: 1px solid var(--line);
+}
+
+/* fitColumns 下各列 minWidth 之和比容器宽 8px，产生无意义横向滚动条；
+ * 列宽自适应容器后无横向滚动需求 */
+#view-watch .tabulator .tabulator-tableholder { overflow-x: hidden; }
+
+/* ---- 枚举编辑自绘下拉（fixed 浮层挂 body，避开单元格裁剪） ---- */
+#view-watch .watch-enum-btn {
+  flex: none;
+  width: 18px;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: var(--muted);
+  font-size: 10px;
+  cursor: pointer;
+}
+#view-watch .watch-enum-btn:hover { color: var(--accent); }
+.watch-enum-dd {
+  position: fixed;
+  z-index: 10000;
+  max-height: 160px;
+  overflow-y: auto;
+  background: var(--panel-2);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, .35);
+}
+.watch-enum-opt {
+  padding: 4px 10px;
+  font-size: 12.5px;
+  font-family: var(--mono);
+  color: var(--text);
+  cursor: pointer;
+  white-space: nowrap;
+}
+.watch-enum-opt:hover { background: var(--accent); color: var(--panel); }
+
+/* ---- 波形面板 ---- */
+#view-watch .watch-wave {
+  margin: 10px 14px;   /* 上边距与下边距等距，避免顶边与筛选行底线重叠 */
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel-2);
+}
+.watch-wave-head { display: flex; align-items: center; gap: 8px; padding: 8px 10px 0; }
+.watch-wave-body { height: 220px; padding: 4px 10px 10px; }

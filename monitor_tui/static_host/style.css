@@ -1,0 +1,438 @@
+/* 20kW LLC 上位机 — 数字仪器面板
+ * 深色底 / 磷光绿读数 / 等宽表格数字 / 发丝线分隔。颜色只表达状态。 */
+
+:root {
+  --bg: #0B0E12;
+  --panel: #12161D;
+  --panel-2: #171D26;
+  --line: #232B36;
+  --text: #D7E0EA;
+  --muted: #7C8A99;
+  --accent: #35F0A0;   /* 磷光绿：实时读数 / 正常 / 完成 */
+  --amber: #FFB02E;    /* 警告 / 进行中 */
+  --red: #FF4D5E;      /* 故障 */
+  --cyan: #3EC6E0;     /* 图表第二轨迹（电流） */
+  --accent-soft: rgba(53, 240, 160, .08);  /* 主色悬停底 */
+  --red-soft: rgba(255, 77, 94, .08);
+  --term-bg: #0A0D11;  /* 调试终端底 */
+  --row-cur: #1B2634;  /* 帧表当前行底 */
+  --modal-mask: rgba(0, 0, 0, .55);
+  --mono: "Cascadia Mono", Consolas, monospace;
+  --sans: "Microsoft YaHei UI", system-ui, sans-serif;
+  --radius: 3px;
+}
+
+/* 主题已插件化：暗/亮/海报各主题的变量与覆盖样式见 themes/ 目录，
+ * 由 <html> 上的 .theme-<id> 类切换。此处 :root 保留暗黑默认值作为兜底
+ * （主题 CSS 加载失败或记忆中的主题已卸载时，页面仍正常可读）。 */
+
+* { box-sizing: border-box; margin: 0; padding: 0; }
+
+html, body { height: 100%; }
+
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--sans);
+  font-size: 15px;
+  overflow: hidden;
+}
+
+.mono { font-family: var(--mono); font-variant-numeric: tabular-nums; }
+.hint { font-size: 12px; color: var(--muted); }
+
+.app { display: flex; height: 100vh; }
+
+/* ---- 左侧图标栏 ---- */
+.rail {
+  width: 60px; flex: none;
+  background: var(--panel);
+  border-right: 1px solid var(--line);
+  display: flex; flex-direction: column;
+  padding-top: 8px; gap: 2px;
+}
+.rail-btn {
+  position: relative;
+  display: flex; flex-direction: column; align-items: center; gap: 4px;
+  padding: 12px 0 10px;
+  background: none; border: none; cursor: pointer;
+  color: var(--muted);
+  font-family: var(--sans); font-size: 11px;
+}
+.rail-btn svg { width: 22px; height: 22px; }
+.rail-btn:hover { color: var(--text); }
+.rail-btn.active { color: var(--accent); }
+.rail-btn.active::before {
+  content: ""; position: absolute; left: 0; top: 8px; bottom: 8px;
+  width: 2px; background: var(--accent);
+}
+
+/* ---- 主区 ---- */
+.main { flex: 1; display: flex; flex-direction: column; min-width: 0; }
+
+.statusbar {
+  display: flex; align-items: center; gap: 14px;
+  height: 40px; padding: 0 16px; flex: none;
+  background: var(--panel);
+  border-bottom: 1px solid var(--line);
+  font-size: 13px;
+}
+.sb-item { display: flex; align-items: center; gap: 7px; }
+.sb-item label { color: var(--muted); font-size: 12px; }
+.sb-mono { font-family: var(--mono); font-variant-numeric: tabular-nums; font-size: 12.5px; }
+.sb-sep { width: 1px; height: 16px; background: var(--line); }
+.sb-right { margin-left: auto; color: var(--muted); }
+.dot { width: 8px; height: 8px; border-radius: 50%; background: var(--muted); }
+.dot.on { background: var(--accent); }
+.dot.warn { background: var(--amber); }
+
+.view { display: none; flex: 1; overflow-y: auto; padding: 20px 24px; }
+.view.active { display: block; }
+
+/* ---- 电源视图：英雄读数 ---- */
+.hero {
+  display: flex; align-items: flex-end; gap: 56px;
+  padding-bottom: 20px; border-bottom: 1px solid var(--line);
+}
+.reading label {
+  display: block; font-size: 13px; color: var(--muted); margin-bottom: 2px;
+}
+.big {
+  font-family: var(--mono); font-variant-numeric: tabular-nums;
+  font-size: 64px; line-height: 1.05; color: var(--accent);
+}
+.big .unit { font-size: 18px; color: var(--muted); margin-left: 8px; }
+.cluster { margin-left: auto; display: flex; flex-direction: column; gap: 10px; padding-bottom: 6px; }
+.cluster-row { display: flex; align-items: center; gap: 12px; font-size: 13px; }
+.cluster-row label { color: var(--muted); width: 30px; }
+.cluster-row .mono { font-size: 18px; color: var(--text); }
+
+.lamp { display: inline-flex; align-items: center; gap: 7px; }
+.lamp i {
+  width: 10px; height: 10px; border-radius: 50%;
+  background: var(--muted); display: inline-block;
+}
+.lamp b { font-weight: 500; font-size: 13px; }
+.lamp.run i { background: var(--accent); }
+.lamp.fault i { background: var(--red); }
+
+/* ---- 目标地址行（电源页，位于给定行上方） ---- */
+.addr-line {
+  display: flex; align-items: center; flex-wrap: wrap; gap: 14px;
+  padding: 14px 0 0;
+}
+.addr-line .addr-label { font-size: 12px; color: var(--muted); }
+.addr-line .hint { flex-basis: 100%; padding: 0; }
+#view-multi .addr-line { padding: 6px 14px 14px; }
+
+.addr-line input {
+  width: 90px; padding: 7px 9px;
+  background: var(--panel-2); color: var(--text);
+  border: 1px solid var(--line); border-radius: var(--radius);
+  font-family: var(--mono); font-size: 13px; outline: none;
+}
+.addr-line input:focus { border-color: var(--accent); }
+
+/* ---- 关于页 ---- */
+.about-head { display: flex; align-items: center; gap: 18px; padding: 26px 0 18px; }
+.about-logo { height: 64px; flex: none; }
+.about-uni { font-size: 22px; font-weight: 600; letter-spacing: 2px; }
+.about-uni-en { font-size: 12px; color: var(--muted); margin-top: 4px; letter-spacing: 1px; }
+.about-table td { padding: 9px 14px; }
+.about-table td:first-child { color: var(--muted); width: 160px; }
+
+/* ---- 给定行 ---- */
+.setrow {
+  display: flex; align-items: flex-end; gap: 18px;
+  padding: 16px 0; border-bottom: 1px solid var(--line);
+}
+.set-field label { display: block; font-size: 12px; color: var(--muted); margin-bottom: 5px; }
+.set-field input {
+  width: 110px; padding: 8px 10px;
+  background: var(--panel-2); color: var(--text);
+  border: 1px solid var(--line); border-radius: var(--radius);
+  font-family: var(--mono); font-variant-numeric: tabular-nums; font-size: 14px;
+  outline: none;
+}
+.set-field input:focus { border-color: var(--accent); }
+.set-field input:disabled { opacity: .35; }
+
+/* ---- 按钮 ---- */
+.btn {
+  padding: 9px 22px;
+  background: var(--panel-2); color: var(--text);
+  border: 1px solid var(--line); border-radius: var(--radius);
+  font-family: var(--sans); font-size: 14px; cursor: pointer;
+}
+.btn:hover:not(:disabled) { border-color: var(--muted); }
+.btn:disabled { opacity: .35; cursor: not-allowed; }
+.btn-s { padding: 5px 14px; font-size: 12.5px; }
+.btn-accent { background: none; border-color: var(--accent); color: var(--accent); }
+.btn-accent:hover:not(:disabled) { background: var(--accent-soft); border-color: var(--accent); }
+.btn-ghost { background: none; }
+.btn-run {
+  margin-left: auto; min-width: 150px; padding: 11px 28px; font-size: 16px;
+  border-color: var(--accent); color: var(--accent); background: none;
+}
+.btn-run:hover:not(:disabled) { background: var(--accent-soft); }
+.btn-run.stop { border-color: var(--red); color: var(--red); }
+.btn-run.stop:hover:not(:disabled) { background: var(--red-soft); }
+
+/* ---- 面板 ---- */
+.panel {
+  margin-top: 20px;
+  background: var(--panel);
+  border: 1px solid var(--line); border-radius: var(--radius);
+}
+.panel-head {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 10px 14px; border-bottom: 1px solid var(--line);
+}
+.panel-title { font-size: 13px; color: var(--muted); }
+.panel-head .mono { font-size: 13px; color: var(--accent); }
+
+.chart-key { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--muted); }
+.chart-key i { width: 14px; height: 2px; display: inline-block; margin-left: 10px; }
+.chart-key .key-v { background: var(--accent); }
+.chart-key .key-i { background: var(--cyan); }
+.chart-wrap { height: 220px; padding: 10px 14px 12px; }
+
+/* ---- 故障灯阵 ---- */
+.fault-row {
+  display: flex; gap: 26px;
+  margin-top: 20px; padding: 12px 16px;
+  background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius);
+}
+.fault-lamp {
+  display: inline-flex; align-items: center; gap: 8px;
+  font-size: 12.5px; color: var(--muted);
+}
+.fault-lamp i { width: 9px; height: 9px; border-radius: 50%; background: var(--panel-2); border: 1px solid var(--line); }
+.fault-lamp.set { color: var(--red); }
+.fault-lamp.set i { background: var(--red); border-color: var(--red); }
+.fault-lamp.ok { color: var(--muted); }
+.fault-lamp.ok i { background: var(--accent); border-color: var(--accent); }
+
+/* ---- 升级视图 ---- */
+.stepbar {
+  display: flex; align-items: center;
+  padding-bottom: 18px; border-bottom: 1px solid var(--line);
+}
+.sstep { display: flex; align-items: center; gap: 8px; color: var(--muted); font-size: 13.5px; }
+.sstep b { font-family: var(--mono); font-weight: 400; }
+.sstep + .sstep { margin-left: 34px; }
+.sstep.done { color: var(--accent); }
+.sstep.active { color: var(--amber); }
+.sstep.fail { color: var(--red); }
+
+.dropzone {
+  margin-top: 20px;
+  border: 1px dashed var(--line); border-radius: var(--radius);
+  padding: 40px 16px; text-align: center; cursor: pointer;
+  background: var(--panel);
+}
+.dropzone:hover { border-color: var(--accent); }
+.dz-text { font-size: 15px; }
+.dz-sub { font-size: 12px; color: var(--muted); margin-top: 6px; }
+
+.file-chip {
+  display: flex; align-items: center; gap: 18px;
+  margin-top: 12px; padding: 10px 14px;
+  background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius);
+  font-size: 13px;
+}
+.fc-name { font-weight: 600; }
+.fc-meta { color: var(--muted); font-size: 12.5px; }
+.fc-crc { color: var(--accent); font-size: 12.5px; margin-left: auto; }
+
+/* 设备侧状态：停在 Bootloader 要显眼，那是 App 损坏之后唯一的恢复入口 */
+.dev-state { padding: 12px 14px 0; font-size: 14px; color: var(--text); }
+.dev-state.warn { color: var(--amber); }
+#devStateHint { padding: 4px 14px 0; line-height: 1.65; }
+#devStateHint:empty { display: none; }
+
+.mod-line { display: flex; align-items: center; gap: 14px; padding: 12px 14px; }
+.mod-list { display: flex; gap: 8px; }
+.mchip {
+  padding: 5px 12px; cursor: pointer;
+  border: 1px solid var(--line); border-radius: var(--radius);
+  font-family: var(--mono); font-size: 12.5px; color: var(--muted);
+}
+.mchip:hover { border-color: var(--muted); color: var(--text); }
+.mchip.sel { border-color: var(--accent); color: var(--accent); }
+.bl-info { padding: 0 14px 12px; font-size: 12.5px; color: var(--muted); }
+
+.blocks { display: flex; gap: 5px; padding: 14px; flex-wrap: wrap; }
+.blk {
+  width: 22px; height: 22px;
+  border: 1px solid var(--line); border-radius: 2px;
+  background: var(--panel-2);
+  transition: background .15s, border-color .15s;
+}
+.blk.done { background: var(--accent); border-color: var(--accent); }
+.blk.cur { border-color: var(--amber); }
+.blocks:empty { display: none; }
+
+.stage-msg { padding: 0 14px 12px; font-size: 13px; color: var(--muted); }
+.panel .btn-row { display: flex; gap: 12px; padding: 0 14px 14px; }
+
+/* BL 升级面板：btn-row 上方没有别的内容，补上间距；chip 嵌在面板内要留边距 */
+#blPanel .btn-row { padding-top: 14px; }
+#blPanel .file-chip { margin: 12px 14px 0; }
+
+.result {
+  margin: 0 14px 14px; padding: 12px 14px;
+  border: 1px solid var(--accent); border-radius: var(--radius);
+  font-size: 14px; color: var(--accent);
+}
+.safety-note { padding: 0 14px 14px; line-height: 1.6; }
+
+/* 面板头里的小控件（探测超时选择） */
+.param-inline {
+  display: flex; align-items: center; gap: 8px;
+  font-size: 12.5px; color: var(--muted);
+}
+.sel {
+  padding: 5px 8px; background: var(--panel-2); color: var(--text);
+  border: 1px solid var(--line); border-radius: var(--radius);
+  font-family: var(--mono); font-variant-numeric: tabular-nums; font-size: 12.5px;
+  outline: none;
+}
+.sel:focus { border-color: var(--accent); }
+
+/* 升级确认弹窗 */
+.modal {
+  position: fixed; inset: 0; z-index: 120;
+  display: flex; align-items: center; justify-content: center;
+  background: var(--modal-mask);
+}
+.modal-box {
+  width: 560px; padding: 20px 22px;
+  background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius);
+}
+.modal-title { font-size: 15px; color: var(--amber); margin-bottom: 12px; }
+.modal-text { font-size: 13.5px; line-height: 1.75; }
+.modal-btns { display: flex; justify-content: flex-end; gap: 12px; margin-top: 20px; }
+
+/* ---- 调试视图 ---- */
+.term {
+  background: var(--term-bg);
+  border-top: 1px solid var(--line);
+  padding: 10px 14px;
+  font-family: var(--mono); font-variant-numeric: tabular-nums;
+  font-size: 12.5px; line-height: 1.7; color: var(--accent);
+  height: 150px; overflow-y: auto;
+  white-space: pre-wrap; word-break: break-all;
+  border-radius: 0 0 var(--radius) var(--radius);
+}
+.term-dim { color: var(--muted); }
+.dbg-switch { display: flex; align-items: center; gap: 8px; font-size: 12.5px; color: var(--muted); cursor: pointer; }
+.dbg-switch input { accent-color: var(--accent); }
+
+.frametable-wrap { max-height: 300px; overflow-y: auto; }
+.frametable { width: 100%; border-collapse: collapse; font-size: 12px; }
+.frametable th {
+  position: sticky; top: 0;
+  background: var(--panel-2); color: var(--muted);
+  text-align: left; font-weight: 400;
+  padding: 6px 10px; border-bottom: 1px solid var(--line);
+}
+.frametable td { padding: 4px 10px; border-bottom: 1px solid var(--line); color: var(--text); }
+.frametable tr.tx td { color: var(--muted); }
+.frametable tr.cur td { background: var(--row-cur); color: var(--cyan); }  /* 批量升级：当前台 */
+.btn-row-inline { display: flex; gap: 8px; }
+
+/* ---- Toast ---- */
+.toast-container {
+  position: fixed; top: 14px; left: 50%; transform: translateX(-50%);
+  display: flex; flex-direction: column; gap: 8px; z-index: 99;
+}
+.toast {
+  padding: 10px 18px;
+  background: var(--panel-2); color: var(--text);
+  border: 1px solid var(--line); border-left: 3px solid var(--accent);
+  border-radius: var(--radius);
+  font-size: 13.5px;
+}
+.toast.error { border-left-color: var(--red); }
+.toast.warning { border-left-color: var(--amber); }
+
+/* 滚动条 */
+::-webkit-scrollbar { width: 8px; height: 8px; }
+::-webkit-scrollbar-thumb { background: var(--line); border-radius: 4px; }
+::-webkit-scrollbar-track { background: transparent; }
+
+/* ---- 01 美化补丁：可读性与小窗 ---- */
+/* 帧表数字列等宽对齐，避免时间/ID 列随内容抖动 */
+.frametable td { font-family: var(--mono); font-variant-numeric: tabular-nums; }
+
+/* 键盘操作时焦点可见（鼠标点击不显示） */
+.btn:focus-visible, .rail-btn:focus-visible, .mchip:focus-visible,
+.sel:focus-visible, .dbg-switch input:focus-visible {
+  outline: 1px solid var(--accent); outline-offset: 2px;
+}
+
+/* 块格第四态：该块经历过重发（琥珀底，与当前块的琥珀描边区分） */
+.blk.retry { background: rgba(255, 176, 46, .35); border-color: var(--amber); }
+
+/* 小窗不崩：1366 以下收拢英雄区间距，1100 以下读数降级并允许换行 */
+@media (max-width: 1366px) { .hero { gap: 36px; } }
+@media (max-width: 1100px) {
+  .big { font-size: 44px; }
+  .hero { flex-wrap: wrap; gap: 20px; }
+  .cluster { margin-left: 0; }
+  .setrow { flex-wrap: wrap; }
+}
+
+/* ---- 电源页遥测 cluster（4 路温度 + 运行请求/walk-in 位） ---- */
+#telCluster .cluster-row label { width: auto; }
+#telCluster .cluster-row .mono { font-size: 14px; color: var(--muted); min-width: 52px; }
+#telCluster .cluster-row { gap: 8px; }
+#telCluster .cluster-row > label:not(:first-child) { margin-left: 14px; }
+#telCluster { row-gap: 8px; }
+
+/* ---- 调试页：帧表筛选/过滤行 ---- */
+.frame-filter {
+  display: flex; align-items: center; flex-wrap: wrap; gap: 10px;
+  padding: 8px 14px; border-bottom: 1px solid var(--line);
+}
+.ff-label { font-size: 12.5px; color: var(--muted); flex: none; }
+.ff-addr {
+  width: 170px; padding: 5px 8px;
+  background: var(--panel-2); color: var(--text);
+  border: 1px solid var(--line); border-radius: var(--radius);
+  font-size: 12.5px; outline: none;
+}
+.ff-addr:focus { border-color: var(--accent); }
+
+/* ---- 多机视图 ---- */
+.multi-hint { padding: 10px 14px; line-height: 1.7; }
+.multi-setrow { padding: 16px 14px; border-bottom: none; }
+.multi-setrow .btn-run { margin-left: 0; min-width: 120px; }
+.mdot {
+  display: inline-block; width: 9px; height: 9px; border-radius: 50%;
+  background: var(--panel-2); border: 1px solid var(--line);
+}
+.mdot.on { background: var(--accent); border-color: var(--accent); }
+.frametable td.off { color: var(--muted); }
+
+/* ==========================================================================
+ * 桌宠（pets/）
+ * 舞台全屏固定、不接收指针，宠物 canvas 透明 —— 宠物在任何时候都不挡业务点击；
+ * z-index 低于弹窗(120)与 toast(99)，弹窗/提示出现时宠物在其下。
+ * 设置页外观面板里的桌宠行 / 开关 / 宠物选择样式。
+ * ========================================================================== */
+.pet-stage {
+  position: fixed; inset: 0; z-index: 90;
+  pointer-events: none; overflow: hidden;
+}
+.pet-stage .pet-canvas { display: block; }
+
+.pet-row { gap: 12px; }
+.pet-toggle {
+  display: inline-flex; align-items: center; gap: 7px;
+  font-size: 12.5px; color: var(--text); cursor: pointer; flex: none;
+}
+.pet-toggle input { accent-color: var(--accent); cursor: pointer; margin: 0; }
+#petSel { min-width: 110px; }
+#petSel:disabled { opacity: .5; cursor: not-allowed; }
