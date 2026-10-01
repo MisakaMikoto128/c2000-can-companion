@@ -4,6 +4,6 @@ __pycache__/
 logfile/
 build/
 release/
-static_host/_index_live.html
+monitor_tui/static_host/_index_live.html
 ControlCAN.dll
 klog*.txt
