@@ -771,7 +771,7 @@ class HostAPI:
     def _wait_user_ok(self, info):
         """把探测结论摆给用户等一句答复；不同意或没人答复就抛错退出。"""
         text = ("检测到设备在跑应用固件（版本 %s，地址 0x%02X）。继续升级会让设备"
-                "复位并进入 Bootloader 停机等待烧写。是否继续？"
+                "复位并进入 Bootloader 等待烧写。是否继续？"
                 % (info.version_str, info.addr))
         self._confirm_seq += 1
         self._confirm_answer = None
@@ -875,7 +875,7 @@ class HostAPI:
     def _upgrade_worker(self, target_addr, window_s, compress=False, auto=False):
         # 结束态由本函数统一落笔：流程各分支只管写 message/success，
         # running 一定在 finally 里复位，前端轮询不会看到永远在跑的流程。
-        self._watch.stop_poll("升级开始")   # App 即将停机跳 BL，观察读事务先行消亡
+        self._watch.stop_poll("升级开始")   # App 即将复位跳 BL，观察读事务先行消亡
         try:
             addr = self._acquire_bootloader(target_addr, window_s, auto=auto)
             chip = "0x%02X" % addr

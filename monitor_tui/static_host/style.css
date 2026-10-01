@@ -11,7 +11,7 @@
   --accent: #35F0A0;   /* 磷光绿：实时读数 / 正常 / 完成 */
   --amber: #FFB02E;    /* 警告 / 进行中 */
   --red: #FF4D5E;      /* 故障 */
-  --cyan: #3EC6E0;     /* 图表第二轨迹（电流） */
+  --cyan: #3EC6E0;     /* 图表第二轨迹 */
   --accent-soft: rgba(53, 240, 160, .08);  /* 主色悬停底 */
   --red-soft: rgba(255, 77, 94, .08);
   --term-bg: #0A0D11;  /* 调试终端底 */
@@ -89,7 +89,7 @@ body {
 .view { display: none; flex: 1; overflow-y: auto; padding: 20px 24px; }
 .view.active { display: block; }
 
-/* ---- 电源视图：英雄读数 ---- */
+/* ---- 大字读数 ---- */
 .hero {
   display: flex; align-items: flex-end; gap: 56px;
   padding-bottom: 20px; border-bottom: 1px solid var(--line);
@@ -116,7 +116,7 @@ body {
 .lamp.run i { background: var(--accent); }
 .lamp.fault i { background: var(--red); }
 
-/* ---- 目标地址行（电源页，位于给定行上方） ---- */
+/* ---- 目标地址行 ---- */
 .addr-line {
   display: flex; align-items: center; flex-wrap: wrap; gap: 14px;
   padding: 14px 0 0;
@@ -384,7 +384,7 @@ body {
   .setrow { flex-wrap: wrap; }
 }
 
-/* ---- 电源页遥测 cluster（4 路温度 + 运行请求/walk-in 位） ---- */
+/* ---- 信息 cluster ---- */
 #telCluster .cluster-row label { width: auto; }
 #telCluster .cluster-row .mono { font-size: 14px; color: var(--muted); min-width: 52px; }
 #telCluster .cluster-row { gap: 8px; }

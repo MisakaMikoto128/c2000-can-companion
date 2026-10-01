@@ -54,7 +54,7 @@ class FakeClock:
 
 class FakeModule:
     """一台模块的替身：在 App 时答 0x20 状态查询（B1=0x01）；收到单播 0x06 先受理，
-    停机 0.5 秒（实测 CAN_ENTER_BL_SHUTDOWN_MS=500）后复位进 Bootloader。
+    延时 0.5 秒（实测交接延时）后复位进 Bootloader。
     主机复查总在停机窗之后（真实时序 sleep 0.6s > 停机 0.5s），事件域里建模为
     「受理后收到的下一个 0x20 查询到来时已在 Bootloader」。
     reaches_bootloader=False 模拟「受理了但没复位成功」（停在保护里）。

@@ -5,3 +5,5 @@ logfile/
 build/
 release/
 static_host/_index_live.html
+ControlCAN.dll
+klog*.txt

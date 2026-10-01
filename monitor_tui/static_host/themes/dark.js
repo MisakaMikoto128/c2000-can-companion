@@ -5,8 +5,8 @@ window.ThemeRegistry.register({
   id: "dark",
   label: "暗黑",
   chart: {
-    v: "#35F0A0",        // 电压轨迹：磷光绿
-    i: "#3EC6E0",        // 电流轨迹：青
+    v: "#35F0A0",        // 轨迹一：磷光绿
+    i: "#3EC6E0",        // 轨迹二：青
     tick: "#7C8A99",     // 刻度文字
     grid: "#1A212B",     // 网格线
     border: "#232B36",   // 坐标轴线

@@ -22,9 +22,11 @@ from collections import deque
 
 from monitor_tui.protocol import CAN_ADDR_HOST, encode_probe_query, own_id
 
-APP_BASE_WORD = 0x080000      # 演示固件独立运行，App 区从 Flash 首字开始（字地址）
-APP_WINDOW_WORDS = 0x10000    # CRC 镜像窗口（字）= 整个 Flash（16 扇段 × 4096 字）；
-                              # App 与 Bootloader 共存时按实际 App 区大小收紧
+FLASH_BASE_WORD = 0x080000    # Flash 首字（字地址）
+APP_WINDOW_WORDS = 0x10000    # 整片 Flash 容量（16 扇段 × 4096 字）；
+APP_BASE_WORD = FLASH_BASE_WORD   # 兼容别名：独立运行固件的镜像基址；
+                                  # 镜像基址按符号文件自适应（见 _parse_eabi）：
+                                  # 独立运行 = Flash 首字；与 Bootloader 共存 = App 区首字。
 MAX_READ_WORDS = 255        # 0x30 单次读上限
 MAX_WRITE_WORDS = 4         # 0x32 单次写上限
 FRAME_MS = 1.216            # 125k 下 8 字节扩展帧线上时间（BL 链路实测）
@@ -101,11 +103,12 @@ _WRAP_TAGS = ("DW_TAG_typedef", "DW_TAG_const_type", "DW_TAG_volatile_type",
 class SymbolFile:
     """一份 .out/.elf 的解析结果：符号表 + App 区 CRC 镜像。"""
 
-    def __init__(self, path, fmt, symbols, image):
+    def __init__(self, path, fmt, symbols, image, flash_base=APP_BASE_WORD):
         self.path = path
         self.fmt = fmt            # "EABI" / "COFF"
         self.symbols = symbols    # {名: {"addr":字地址,"words":字数,"type":..,"writable":b}}
-        self.image = image        # CRC 镜像字节（基址 APP_BASE_WORD，长度 ≤ 2×窗口）
+        self.image = image        # CRC 镜像字节（基址 flash_base，长度 ≤ 2×窗口）
+        self.flash_base = flash_base  # 镜像基址（字地址）：符号文件里最低的 Flash 加载地址
         self.crc32 = zlib.crc32(image)
 
     def image_words(self):
@@ -237,15 +240,19 @@ def _parse_eabi(path):
         # 拷入窗口，空洞与尾部保持 0xFF（擦除态）。不能用节头 sh_addr——
         # .TI.ramfunc 之类“Load=Flash/Run=RAM”的节 sh_addr 是 RAM 运行地址，
         # 它在 Flash 里的加载映像只有 p_paddr 指得出（实测该节 0x00A000/0x085000）。
-        img = bytearray(b"\xFF" * (APP_WINDOW_WORDS * 2))
+        flash_top = FLASH_BASE_WORD + APP_WINDOW_WORDS
+        # 镜像基址取符号文件里最低的 Flash 加载段：独立运行固件 = 0x080000，
+        # 与 Bootloader 共存的 App = 0x084000——0x35 校验的请求范围随它走
+        segs = [seg for seg in elf.iter_segments()
+                if seg.header["p_type"] == "PT_LOAD" and seg.header["p_filesz"]
+                and FLASH_BASE_WORD <= seg.header["p_paddr"] < flash_top]
+        base = min(s.header["p_paddr"] for s in segs) if segs else APP_BASE_WORD
+        img = bytearray(b"\xFF" * ((flash_top - base) * 2))
         covered = 0
-        for seg in elf.iter_segments():
+        for seg in segs:
             h = seg.header
-            if h["p_type"] != "PT_LOAD" or not h["p_filesz"] \
-                    or not APP_BASE_WORD <= h["p_paddr"] < APP_BASE_WORD + APP_WINDOW_WORDS:
-                continue
             data = seg.data()
-            off = (h["p_paddr"] - APP_BASE_WORD) * 2
+            off = (h["p_paddr"] - base) * 2
             n = min(len(data), len(img) - off)
             if n < len(data):
                 # 超出窗口的段数据被丢弃：CRC 仍会对窗口内内容通过，
@@ -262,7 +269,7 @@ def _parse_eabi(path):
         for sec in elf.iter_sections():
             h = sec.header
             if h["sh_size"] and h["sh_flags"] & 0x2 \
-                    and APP_BASE_WORD <= h["sh_addr"] < APP_BASE_WORD + APP_WINDOW_WORDS:
+                    and FLASH_BASE_WORD <= h["sh_addr"] < flash_top:
                 sections.append((h["sh_addr"], h["sh_size"] // 2,
                                  bool(h["sh_flags"] & SHF_WRITE)))
 
@@ -296,7 +303,7 @@ def _parse_eabi(path):
                 addr = int.from_bytes(bytes(loc.value[1:5]), "little")
                 symbols[name] = {"addr": addr, "words": max(1, t["w"]), "type": t,
                                  "writable": word_writable(addr)}
-    return SymbolFile(path, "EABI", symbols, image)
+    return SymbolFile(path, "EABI", symbols, image, flash_base=base)
 
 
 def _find_ofd2000():
@@ -341,8 +348,9 @@ def _parse_coff(path):
     # CRC 镜像复用升级链路的 hex2000 通路（对 COFF 同样适用，含基址守卫）
     from monitor_tui.upgrade import firmware as FW
     fw = FW.load_firmware(path)
-    n = min(len(fw.octets), APP_WINDOW_WORDS * 2)
-    return SymbolFile(path, "COFF", symbols, fw.octets[:n // 2 * 2])
+    base = fw.base_addr // 2
+    n = min(len(fw.octets), (FLASH_BASE_WORD + APP_WINDOW_WORDS - base) * 2)
+    return SymbolFile(path, "COFF", symbols, fw.octets[:n // 2 * 2], flash_base=base)
 
 
 # ==================== 值解码 / 编码 ====================
@@ -595,7 +603,7 @@ class WatchSession:
             return None
         return f.data[4], int.from_bytes(bytes(f.data[0:4]), "little")
 
-    def read_image(self, words, on_progress=None, alive=None):
+    def read_image(self, words, on_progress=None, alive=None, base=APP_BASE_WORD):
         """按 ≤255 字分段读回 App 区（直读；Flash 内容静态，无撕裂问题）。
 
         整个镜像共用一次订阅与单槽：段 k 收满期望帧数后立即在订阅内发段 k+1
@@ -607,10 +615,10 @@ class WatchSession:
             with self.ch.subscribe(self._reply_pred(0x31)) as mb:
                 while off < words:
                     n = min(MAX_READ_WORDS, words - off)
-                    raw = self._read_seg(mb, APP_BASE_WORD + off, n, direct=True,
+                    raw = self._read_seg(mb, base + off, n, direct=True,
                                          retries=VERIFY_RETRIES)
                     if raw is None:
-                        raise WatchError("读取校验区失败（0x%06X 起）" % (APP_BASE_WORD + off))
+                        raise WatchError("读取校验区失败（0x%06X 起）" % (base + off))
                     out += raw
                     off += n
                     if on_progress is not None:
@@ -883,7 +891,7 @@ class WatchManager:
         t0 = time.monotonic()
         # 快路径：0x35 单帧 CRC 校验（App 1.2.5 起，毫秒级）。旧固件白名单外
         # 整帧丢弃 0x35，无应答时回退逐段读回路径
-        fast = sess.crc_verify(APP_BASE_WORD, words)
+        fast = sess.crc_verify(sf.flash_base, words)
         if fast is not None and fast[0] == 0:
             if not self._connect_alive(addr):
                 return
@@ -896,7 +904,8 @@ class WatchManager:
             return
         try:
             remote = sess.read_image(words, lambda p: setattr(self, "_verify_prog", p),
-                                     alive=lambda: self._connect_alive(addr))
+                                     alive=lambda: self._connect_alive(addr),
+                                     base=sf.flash_base)
         except WatchError as e:
             if self._connect_alive(addr):
                 self._set("mismatch", str(e))

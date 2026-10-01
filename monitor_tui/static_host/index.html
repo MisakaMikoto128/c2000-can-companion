@@ -5,12 +5,12 @@
 <title>CAN Companion</title>
 <!-- 前端资源版本号：任何静态文件（css/js）改动后递增，
      用于绕过 WebView2 持久缓存，避免“新 HTML 配旧 JS”的混合缓存态 -->
-<link rel="stylesheet" href="style.css?v=1000003">
-<link rel="stylesheet" href="tabulator.min.css?v=1000003"><!-- WATCH 表格组件（MIT，本地内置） -->
-<link rel="stylesheet" href="watch.css?v=1000003"><!-- WATCH 表格主题映射 -->
+<link rel="stylesheet" href="style.css?v=1000004">
+<link rel="stylesheet" href="tabulator.min.css?v=1000004"><!-- WATCH 表格组件（MIT，本地内置） -->
+<link rel="stylesheet" href="watch.css?v=1000004"><!-- WATCH 表格主题映射 -->
 <!-- 主题插件样式：全部预加载，按 <html> 上的 .theme-<id> 类生效，切换零延迟 -->
-<link rel="stylesheet" href="themes/dark.css?v=1000003">
-<link rel="stylesheet" href="themes/light.css?v=1000003">
+<link rel="stylesheet" href="themes/dark.css?v=1000004">
+<link rel="stylesheet" href="themes/light.css?v=1000004">
 <script>
 /* 首帧防闪烁：CSS/业务脚本加载前，先按记忆在 <html> 上挂好主题类。
  * 类在此处与 ThemeRegistry 保持同一命名（.theme-<id>）。 */
@@ -340,13 +340,13 @@
 <div class="toast-container" id="toastContainer"></div>
 
 <!-- 主题注册表先行，随后各主题插件自行注册，最后加载业务脚本 -->
-<script src="themes/registry.js?v=1000003"></script>
-<script src="themes/dark.js?v=1000003"></script>
-<script src="themes/light.js?v=1000003"></script>
-<script src="chart.min.js?v=1000003"></script><!-- WATCH 波形画布 Chart.js（MIT，本地内置） -->
-<script src="tabulator.min.js?v=1000003"></script><!-- WATCH 表格组件 Tabulator 6.6.0（MIT，本地内置） -->
-<script src="expr-eval.min.js?v=1000003"></script><!-- WATCH 表达式行求值 expr-eval 2.0.2（MIT，本地内置） -->
-<script src="watch.js?v=1000003"></script><!-- WATCH 页逻辑：先于 app.js，switchView 引用其函数 -->
-<script src="app.js?v=1000003"></script>
+<script src="themes/registry.js?v=1000004"></script>
+<script src="themes/dark.js?v=1000004"></script>
+<script src="themes/light.js?v=1000004"></script>
+<script src="chart.min.js?v=1000004"></script><!-- WATCH 波形画布 Chart.js（MIT，本地内置） -->
+<script src="tabulator.min.js?v=1000004"></script><!-- WATCH 表格组件 Tabulator 6.6.0（MIT，本地内置） -->
+<script src="expr-eval.min.js?v=1000004"></script><!-- WATCH 表达式行求值 expr-eval 2.0.2（MIT，本地内置） -->
+<script src="watch.js?v=1000004"></script><!-- WATCH 页逻辑：先于 app.js，switchView 引用其函数 -->
+<script src="app.js?v=1000004"></script>
 </body>
 </html>

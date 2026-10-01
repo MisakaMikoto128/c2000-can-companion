@@ -11,7 +11,7 @@
   --accent: #35F0A0;   /* 磷光绿：实时读数 / 正常 / 完成 */
   --amber: #FFB02E;    /* 警告 / 进行中 */
   --red: #FF4D5E;      /* 故障 */
-  --cyan: #3EC6E0;     /* 图表第二轨迹（电流） */
+  --cyan: #3EC6E0;     /* 图表第二轨迹 */
   --accent-soft: rgba(53, 240, 160, .08);
   --red-soft: rgba(255, 77, 94, .08);
   --term-bg: #0A0D11;
